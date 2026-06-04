@@ -36,7 +36,7 @@ git commit -m "Initial commit — DocuGest (Fantastic-admin example)"
 5. Créez le dépôt, puis :
 
 ```powershell
-git remote add origin https://github.com/VOTRE_COMPTE/docugest.git
+git remote add origin https://github.com/Setpars/DocusGest.git
 git push -u origin main
 ```
 

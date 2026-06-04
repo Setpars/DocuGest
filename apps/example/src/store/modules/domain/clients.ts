@@ -10,6 +10,7 @@ import {
   loadClientWithDossiers,
   searchClientsInRegistry,
   syncClientForDossier,
+  updateClientById,
 } from '@/services/client-dossier'
 import type { ClientFormData, ClientRecord, ClientWithDossiers } from '@/types/client'
 import { collectFromRecords, collectUniqueStrings } from '@/utils/collect-field-suggestions'
@@ -65,6 +66,14 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
 
   async function syncForDossier(form: ClientFormData) {
     const result = await syncClientForDossier(db, form, registry.value)
+    await loadRegistry(true)
+    return result
+  }
+
+  async function updateClient(form: ClientFormData) {
+    const id = form.clientId?.trim()
+    if (!id) throw new Error('Client introuvable.')
+    const result = await updateClientById(db, id, form, registry.value)
     await loadRegistry(true)
     return result
   }
@@ -168,6 +177,7 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
     searchByName,
     findExactByName,
     syncForDossier,
+    updateClient,
     fetchClientDetail,
     fetchClientRecord,
     getDossierAvocats,

@@ -8,6 +8,9 @@ import {
   updateDoc,
 } from 'firebase/firestore'
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { COLLECTIONS } from '@/constants/collections'
+import { agendaToFirestore, mapAgendaFromFirestore } from '@/domain/mappers'
 import { db } from '@/firebase'
 import type { AgendaEntry, AgendaFormData, AgendaType } from '@/types/agenda'
 import { writeAuditLog } from '@/utils/audit-log'
@@ -56,9 +59,11 @@ const TYPE_META: Record<AgendaType, { label: string, badge: string, dot: string 
   },
 }
 
-const agendaCol = collection(db, 'agenda')
+const route = useRoute()
+const agendaCol = collection(db, COLLECTIONS.agenda)
 
 const entries = ref<AgendaEntry[]>([])
+const dossiers = ref<Array<{ id: string, motif: string, clientNom: string }>>([])
 const loading = ref(false)
 const saving = ref(false)
 const viewDate = ref(new Date())
@@ -76,12 +81,15 @@ const toast = ref({
 
 const form = ref<AgendaFormData>({
   id: null,
+  dossierId: '',
   date: toDateKey(new Date()),
   type: 'rendez-vous',
   heure: '09:00',
   jour: jourFromDate(toDateKey(new Date())),
   description: '',
 })
+
+const filterDossierId = ref('')
 
 function toDateKey(date: Date) {
   const y = date.getFullYear()
@@ -106,13 +114,32 @@ function showToast(type: 'success' | 'error', message: string) {
 function mapEntry(currentDoc: { id: string, data: () => Record<string, unknown> | object }): AgendaEntry {
   const data = currentDoc.data() as Record<string, unknown>
   const date = String(data.date ?? '')
-  return {
-    id: currentDoc.id,
-    date,
-    type: (data.type === 'audience' ? 'audience' : 'rendez-vous') as AgendaType,
-    heure: String(data.heure ?? ''),
-    jour: String(data.jour ?? jourFromDate(date)),
-    description: String(data.description ?? ''),
+  return mapAgendaFromFirestore(currentDoc.id, data, jourFromDate(date))
+}
+
+function getDossierLabel(dossierId: string): string {
+  if (!dossierId) return '—'
+  const dossier = dossiers.value.find((item) => item.id === dossierId)
+  if (!dossier) return dossierId.slice(0, 8)
+  const client = dossier.clientNom ? ` — ${dossier.clientNom}` : ''
+  return `${dossier.motif || 'Dossier'}${client}`
+}
+
+async function loadDossiers() {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.dossier))
+    dossiers.value = snap.docs
+      .map((item) => {
+        const data = item.data() as Record<string, unknown>
+        return {
+          id: item.id,
+          motif: String(data.motif ?? data.titre ?? ''),
+          clientNom: String(data.clientNom ?? data.nom_client ?? ''),
+        }
+      })
+      .sort((a, b) => a.motif.localeCompare(b.motif, 'fr'))
+  } catch {
+    dossiers.value = []
   }
 }
 
@@ -134,7 +161,11 @@ async function loadEntries() {
   }
 }
 
-onMounted(loadEntries)
+onMounted(async () => {
+  const qDossier = typeof route.query.dossierId === 'string' ? route.query.dossierId : ''
+  if (qDossier) filterDossierId.value = qDossier
+  await Promise.all([loadDossiers(), loadEntries()])
+})
 
 const calendarYear = computed(() => viewDate.value.getFullYear())
 const calendarMonth = computed(() => viewDate.value.getMonth())
@@ -172,18 +203,23 @@ const calendarDays = computed(() => {
 })
 
 function countForDate(dateKey: string) {
-  return entries.value.filter((item) => item.date === dateKey).length
+  return visibleEntries.value.filter((item) => item.date === dateKey).length
 }
 
+const visibleEntries = computed(() => {
+  if (!filterDossierId.value) return entries.value
+  return entries.value.filter((item) => item.dossierId === filterDossierId.value)
+})
+
 const selectedDayEntries = computed(() =>
-  entries.value
+  visibleEntries.value
     .filter((item) => item.date === selectedDate.value)
     .sort((a, b) => a.heure.localeCompare(b.heure)),
 )
 
 const monthStats = computed(() => {
   const prefix = `${calendarYear.value}-${String(calendarMonth.value + 1).padStart(2, '0')}`
-  const monthEntries = entries.value.filter((item) => item.date.startsWith(prefix))
+  const monthEntries = visibleEntries.value.filter((item) => item.date.startsWith(prefix))
   return {
     total: monthEntries.length,
     rdv: monthEntries.filter((item) => item.type === 'rendez-vous').length,
@@ -224,6 +260,7 @@ function openCreate() {
   isEdit.value = false
   form.value = {
     id: null,
+    dossierId: filterDossierId.value,
     date: selectedDate.value,
     type: 'rendez-vous',
     heure: '09:00',
@@ -237,6 +274,7 @@ function openEdit(entry: AgendaEntry) {
   isEdit.value = true
   form.value = {
     id: entry.id,
+    dossierId: entry.dossierId,
     date: entry.date,
     type: entry.type,
     heure: entry.heure,
@@ -275,19 +313,24 @@ async function saveEntry() {
     showToast('error', 'L’heure est obligatoire')
     return
   }
+  if (!form.value.dossierId) {
+    showToast('error', 'Le dossier lié est obligatoire')
+    return
+  }
 
   saving.value = true
   try {
-    const payload = {
+    const payload = agendaToFirestore({
+      dossierId: form.value.dossierId,
       date: form.value.date,
       type: form.value.type,
       heure: form.value.heure,
       jour: jourFromDate(form.value.date),
       description: form.value.description.trim(),
-    }
+    })
 
     if (form.value.id) {
-      await updateDoc(doc(db, 'agenda', form.value.id), payload)
+      await updateDoc(doc(db, COLLECTIONS.agenda, form.value.id), payload)
       await writeAuditLog({
         action: 'modification',
         entity: 'agenda',
@@ -320,7 +363,7 @@ async function saveEntry() {
 async function removeEntry(id: string) {
   if (!window.confirm('Supprimer cet événement de l’agenda ?')) return
   try {
-    await deleteDoc(doc(db, 'agenda', id))
+    await deleteDoc(doc(db, COLLECTIONS.agenda, id))
     await writeAuditLog({ action: 'suppression', entity: 'agenda', entityId: id })
     showToast('success', 'Événement supprimé')
     closeDetail()
@@ -346,9 +389,19 @@ async function removeEntry(id: string) {
         <div>
           <h1 class="text-2xl font-semibold">Agenda</h1>
           <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Consultez rendez-vous et audiences sur un calendrier mensuel.
+            Rendez-vous et audiences rattachés à un dossier.
           </p>
         </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <select
+            v-model="filterDossierId"
+            class="max-w-xs rounded-xl border px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+          >
+            <option value="">Tous les dossiers</option>
+            <option v-for="d in dossiers" :key="d.id" :value="d.id">
+              {{ d.motif }}{{ d.clientNom ? ` — ${d.clientNom}` : '' }}
+            </option>
+          </select>
         <button
           type="button"
           class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white"
@@ -356,6 +409,7 @@ async function removeEntry(id: string) {
         >
           Nouvel événement
         </button>
+        </div>
       </header>
 
       <div v-if="loading" class="rounded-2xl bg-white p-12 text-center text-slate-500 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
@@ -445,6 +499,9 @@ async function removeEntry(id: string) {
                 </span>
               </div>
               <p class="mt-1 text-xs text-slate-500">{{ entry.jour }}</p>
+              <p v-if="entry.dossierId" class="mt-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+                {{ getDossierLabel(entry.dossierId) }}
+              </p>
               <p v-if="entry.description" class="mt-2 line-clamp-2 text-sm text-slate-700 dark:text-slate-300">
                 {{ entry.description }}
               </p>
@@ -459,6 +516,18 @@ async function removeEntry(id: string) {
         <h2 class="text-xl font-semibold">{{ isEdit ? 'Modifier l’événement' : 'Nouvel événement' }}</h2>
       </div>
       <div class="app-modal-overlay__body space-y-4 p-6">
+            <div>
+              <label class="mb-1 block text-sm font-medium">Dossier <span class="text-rose-500">*</span></label>
+              <select
+                v-model="form.dossierId"
+                class="w-full rounded-xl border px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800"
+              >
+                <option value="" disabled>Sélectionner un dossier</option>
+                <option v-for="d in dossiers" :key="d.id" :value="d.id">
+                  {{ d.motif }}{{ d.clientNom ? ` — ${d.clientNom}` : '' }}
+                </option>
+              </select>
+            </div>
             <div>
               <label class="mb-1 block text-sm font-medium">Date</label>
               <input
@@ -526,7 +595,10 @@ async function removeEntry(id: string) {
           <h2 class="mt-2 text-xl font-semibold">{{ selected.heure }} — {{ selected.jour }}</h2>
           <p class="text-sm text-muted-foreground capitalize">{{ formatDisplayDate(selected.date) }}</p>
         </div>
-        <div class="app-modal-overlay__body p-6">
+        <div class="app-modal-overlay__body p-6 space-y-3">
+          <p v-if="selected.dossierId" class="text-sm font-medium">
+            Dossier : {{ getDossierLabel(selected.dossierId) }}
+          </p>
           <p class="text-sm text-muted-foreground whitespace-pre-wrap">
             {{ selected.description || 'Aucune description.' }}
           </p>

@@ -42,7 +42,7 @@ export function getPermissionsForRole(role: AppUserRole): string[] {
 export function getDefaultPathForRole(role: AppUserRole): string {
   switch (role) {
     case 'secretaire':
-      return '/gestion/dossiers'
+      return '/gestion/clients'
     case 'doyen':
       return '/gestion/tableau-de-bord'
     case 'finance':

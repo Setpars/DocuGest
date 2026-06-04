@@ -7,6 +7,8 @@ import {
   updateDoc,
   type Firestore,
 } from 'firebase/firestore'
+import { COLLECTIONS } from '@/constants/collections'
+import { clientToFirestore, mapClientFromFirestore } from '@/domain/mappers'
 import type {
   ClientDossierSummary,
   ClientFormData,
@@ -24,19 +26,6 @@ export type DossierClientSnapshot = {
   clientNationalite: string
   clientAdresse: string
   clientTelephone: string
-}
-
-function mapClientDoc(id: string, data: Record<string, unknown>): ClientRecord {
-  return {
-    id,
-    nom: String(data.nom ?? ''),
-    genre: String(data.genre ?? ''),
-    nationalite: String(data.nationalite ?? ''),
-    adresse: String(data.adresse ?? ''),
-    numTel: String(data.numTel ?? data.telephone ?? ''),
-    createdAt: data.createdAt ? String(data.createdAt) : undefined,
-    updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
-  }
 }
 
 function mapDossierSummary(
@@ -58,24 +47,13 @@ function mapDossierSummary(
   }
 }
 
-function clientPayloadFromForm(form: ClientFormData, now: string) {
-  return {
-    nom: form.nom.trim(),
-    genre: form.genre.trim() || 'Non précisé',
-    nationalite: form.nationalite.trim() || 'Non précisée',
-    adresse: form.adresse.trim() || 'Non précisée',
-    numTel: form.numTel.trim() || 'Non précisé',
-    updatedAt: now,
-  }
-}
-
 export async function fetchAllClients(firestore: Firestore): Promise<ClientRecord[]> {
-  const snap = await getDocs(collection(firestore, 'clients'))
-  return snap.docs.map((item) => mapClientDoc(item.id, item.data() as Record<string, unknown>))
+  const snap = await getDocs(collection(firestore, COLLECTIONS.client))
+  return snap.docs.map((item) => mapClientFromFirestore(item.id, item.data() as Record<string, unknown>))
 }
 
 export async function fetchAllDossiersRaw(firestore: Firestore) {
-  const snap = await getDocs(collection(firestore, 'dossiers'))
+  const snap = await getDocs(collection(firestore, COLLECTIONS.dossier))
   return snap.docs.map((item) => ({
     id: item.id,
     ...(item.data() as Record<string, unknown>),
@@ -152,9 +130,9 @@ export async function getClientById(
   clientId: string,
 ): Promise<ClientRecord | null> {
   if (!clientId || clientId.startsWith('dossier:')) return null
-  const snap = await getDoc(doc(firestore, 'clients', clientId))
+  const snap = await getDoc(doc(firestore, COLLECTIONS.client, clientId))
   if (!snap.exists()) return null
-  return mapClientDoc(snap.id, snap.data() as Record<string, unknown>)
+  return mapClientFromFirestore(snap.id, snap.data() as Record<string, unknown>)
 }
 
 export function filterDossiersForClient(
@@ -206,14 +184,14 @@ export async function syncClientForDossier(
   if (!nom) return null
 
   const now = new Date().toISOString()
-  const payload = clientPayloadFromForm(form, now)
-  const clientsCol = collection(firestore, 'clients')
+  const payload = clientToFirestore({ ...form, updatedAt: now })
+  const clientsCol = collection(firestore, COLLECTIONS.client)
 
   let clientId = form.clientId?.trim() || ''
   if (clientId.startsWith('dossier:')) clientId = ''
 
   if (clientId) {
-    await updateDoc(doc(firestore, 'clients', clientId), payload)
+    await updateDoc(doc(firestore, COLLECTIONS.client, clientId), payload)
     return {
       clientId,
       clientNom: payload.nom,
@@ -229,7 +207,7 @@ export async function syncClientForDossier(
     ?? (await fetchAllClients(firestore)).find((c) => clientNamesMatch(c.nom, nom))
 
   if (existing && !existing.id.startsWith('dossier:')) {
-    await updateDoc(doc(firestore, 'clients', existing.id), payload)
+    await updateDoc(doc(firestore, COLLECTIONS.client, existing.id), payload)
     return {
       clientId: existing.id,
       clientNom: payload.nom,
@@ -253,4 +231,74 @@ export async function syncClientForDossier(
     clientAdresse: payload.adresse,
     clientTelephone: payload.numTel,
   }
+}
+
+function dossierClientPatch(snapshot: DossierClientSnapshot) {
+  return {
+    clientId: snapshot.clientId,
+    clientNom: snapshot.clientNom,
+    clientGenre: snapshot.clientGenre,
+    clientNationalite: snapshot.clientNationalite,
+    clientAdresse: snapshot.clientAdresse,
+    clientTelephone: snapshot.clientTelephone,
+  }
+}
+
+/**
+ * Met à jour la fiche client et propage les champs sur tous les dossiers liés.
+ */
+export async function updateClientById(
+  firestore: Firestore,
+  clientId: string,
+  form: ClientFormData,
+  registry: ClientRecord[],
+): Promise<DossierClientSnapshot> {
+  const nom = form.nom.trim()
+  if (!nom) throw new Error('Le nom du client est obligatoire.')
+  if (!clientId || clientId.startsWith('dossier:')) {
+    throw new Error('Ce client ne peut pas être modifié ici (fiche issue d’un dossier uniquement).')
+  }
+
+  const duplicate = findExactClientInRegistry(registry, nom)
+  if (duplicate && duplicate.id !== clientId) {
+    throw new Error('Un autre client enregistré porte déjà ce nom.')
+  }
+
+  const now = new Date().toISOString()
+  const payload = clientToFirestore({ ...form, updatedAt: now })
+  await updateDoc(doc(firestore, COLLECTIONS.client, clientId), payload)
+
+  const snapshot: DossierClientSnapshot = {
+    clientId,
+    clientNom: payload.nom,
+    clientGenre: payload.genre,
+    clientNationalite: payload.nationalite,
+    clientAdresse: payload.adresse,
+    clientTelephone: payload.numTel,
+  }
+
+  const client = await getClientById(firestore, clientId)
+  const dossiersRaw = await fetchAllDossiersRaw(firestore)
+  const linkedIds = new Set<string>()
+
+  if (client) {
+    for (const dossier of filterDossiersForClient(dossiersRaw, client)) {
+      linkedIds.add(dossier.id)
+    }
+  }
+
+  for (const dossier of dossiersRaw) {
+    if (String(dossier.clientId ?? '') === clientId) {
+      linkedIds.add(String(dossier.id))
+    }
+  }
+
+  const patch = dossierClientPatch(snapshot)
+  await Promise.all(
+    [...linkedIds].map((dossierId) =>
+      updateDoc(doc(firestore, COLLECTIONS.dossier, dossierId), patch),
+    ),
+  )
+
+  return snapshot
 }

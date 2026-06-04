@@ -71,7 +71,7 @@ function canOpenDetail(client: ClientRecord) {
             Clients
           </h1>
           <p class="text-muted-foreground mt-1 text-sm">
-            Consultation et recherche — la création se fait via un nouveau dossier.
+            Recherche et modification des fiches — création via un nouveau dossier.
           </p>
         </div>
         <RouterLink
@@ -183,7 +183,7 @@ function canOpenDetail(client: ClientRecord) {
                   :to="{ name: 'clientDetail', params: { clientId: row.client.id } }"
                   class="text-primary font-medium hover:underline"
                 >
-                  Fiche & dossiers
+                  Ouvrir / modifier
                 </RouterLink>
                 <span v-else class="text-muted-foreground text-xs">Fiche à consolider</span>
               </td>

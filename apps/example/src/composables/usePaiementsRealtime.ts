@@ -5,12 +5,12 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { onUnmounted, ref } from 'vue'
+import { COLLECTIONS } from '@/constants/collections'
+import { mapAffectationFromFirestore, mapPaiementFromFirestore } from '@/domain/mappers'
 import { fetchAvocatNameMap } from '@/services/affectation'
 import type { Paiement, PaiementDossierRef } from '@/types/paiement'
 import type { AffectationRecord } from '@/utils/affectation'
 import { normalizeDevise } from '@/utils/currency'
-import { parseNaturePaiement } from '@/utils/paiement-nature'
-import type { TypePaiement } from '@/types/paiement'
 
 function mapDossierDoc(currentDoc: { id: string, data: () => Record<string, unknown> | object }): PaiementDossierRef {
   const data = currentDoc.data() as Record<string, unknown>
@@ -22,21 +22,6 @@ function mapDossierDoc(currentDoc: { id: string, data: () => Record<string, unkn
     avocatId: String(data.avocatId ?? ''),
     montantHonorairesTotal: Number(data.montantHonorairesTotal ?? 0) || undefined,
     deviseHonoraires: normalizeDevise(data.deviseHonoraires ?? data.devise),
-  }
-}
-
-function mapPaiementDoc(currentDoc: { id: string, data: () => Record<string, unknown> | object }): Paiement {
-  const data = currentDoc.data() as Record<string, unknown>
-  return {
-    id: currentDoc.id,
-    dossierId: String(data.dossierId ?? data.dossier_id ?? ''),
-    nature_paiement: parseNaturePaiement(data.nature_paiement),
-    type_paiement: String(data.type_paiement ?? 'Virement') as TypePaiement,
-    devise: normalizeDevise(data.devise),
-    montant_a_payer: Number(data.montant_a_payer ?? 0),
-    montant_payer: Number(data.montant_payer ?? 0),
-    description: String(data.description ?? ''),
-    date_paiement: String(data.date_paiement ?? ''),
   }
 }
 
@@ -73,10 +58,12 @@ export function usePaiementsRealtime(firestore: Firestore) {
 
     unsubs = [
       onSnapshot(
-        collection(firestore, 'paiements'),
+        collection(firestore, COLLECTIONS.paiement),
         (snap) => {
           paiements.value = snap.docs
-            .map((currentDoc) => mapPaiementDoc(currentDoc))
+            .map((currentDoc) =>
+              mapPaiementFromFirestore(currentDoc.id, currentDoc.data() as Record<string, unknown>),
+            )
             .sort((a, b) => String(b.date_paiement).localeCompare(String(a.date_paiement)))
           ready.pai = true
           checkReady()
@@ -88,7 +75,7 @@ export function usePaiementsRealtime(firestore: Firestore) {
         },
       ),
       onSnapshot(
-        collection(firestore, 'dossiers'),
+        collection(firestore, COLLECTIONS.dossier),
         (snap) => {
           allDossiers.value = snap.docs.map((currentDoc) => mapDossierDoc(currentDoc))
           ready.dos = true
@@ -101,12 +88,11 @@ export function usePaiementsRealtime(firestore: Firestore) {
         },
       ),
       onSnapshot(
-        collection(firestore, 'affectations'),
+        collection(firestore, COLLECTIONS.affectation),
         (snap) => {
-          affectations.value = snap.docs.map((currentDoc) => ({
-            id: currentDoc.id,
-            ...(currentDoc.data() as Omit<AffectationRecord, 'id'>),
-          }))
+          affectations.value = snap.docs.map((currentDoc) =>
+            mapAffectationFromFirestore(currentDoc.id, currentDoc.data() as Record<string, unknown>),
+          )
           ready.aff = true
           checkReady()
         },

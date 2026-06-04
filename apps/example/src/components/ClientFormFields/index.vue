@@ -12,10 +12,15 @@ const props = withDefaults(
   defineProps<{
     modelValue: ClientFormData
     inputClass?: string
+    /** Fiche client existante : nom éditable sans changement de client via l’assist. */
+    editExisting?: boolean
+    hint?: string
   }>(),
   {
     inputClass:
       'w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800',
+    editExisting: false,
+    hint: 'La fiche client est créée ou mise à jour à l’enregistrement du dossier.',
   },
 )
 
@@ -38,12 +43,23 @@ onMounted(() => {
 <template>
   <div class="grid gap-4 sm:grid-cols-2">
     <div class="sm:col-span-2">
+      <template v-if="editExisting">
+        <label class="mb-1.5 block text-sm font-medium">Nom complet <span class="text-rose-500">*</span></label>
+        <input
+          v-model="form.nom"
+          type="text"
+          :class="inputClass"
+          autocomplete="name"
+          placeholder="Nom du client"
+        >
+      </template>
       <ClientNameAssist
+        v-else
         v-model="form"
         :input-class="inputClass"
       />
-      <p class="mt-1 text-xs text-slate-500">
-        La fiche client est créée ou mise à jour à l’enregistrement du dossier.
+      <p v-if="hint" class="mt-1 text-xs text-slate-500">
+        {{ hint }}
       </p>
     </div>
 

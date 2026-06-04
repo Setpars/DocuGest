@@ -24,6 +24,7 @@ let unsubscribe: (() => void) | null = null
 const dossierId = computed(() => String(route.params.dossierId ?? ''))
 
 const canNoteHonoraire = computed(() => hasAuth(PERMISSIONS.noteHonoraire))
+const canAgenda = computed(() => hasAuth(PERMISSIONS.agenda))
 const canPaiements = computed(() => hasAuth(PERMISSIONS.paiements))
 const canPieces = computed(() => hasAuth(PERMISSIONS.piecesJuridiques))
 const canAvocats = computed(() => hasAuth(PERMISSIONS.avocats))
@@ -133,6 +134,7 @@ function imprimerFiche() {
         :error="error"
         :dossier-id="dossierId"
         :can-note-honoraire="canNoteHonoraire"
+        :can-agenda="canAgenda"
         :can-paiements="canPaiements"
         :can-pieces="canPieces"
         :can-avocats="canAvocats"

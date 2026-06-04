@@ -8,12 +8,13 @@ import { PERMISSIONS } from '@/constants/permissions'
 const Layout = () => import('@/layouts/index.vue')
 
 /**
- * Routes métier — accès contrôlé par rôle via meta.auth
- * Secrétaire : clients, dossiers, agenda, notes honoraires
- * Doyen : avocats, tableaux de bord BI, utilisateurs, audit
- * Finances : paiements
+ * Navigation par entités métier (Firestore) :
+ * Client → Dossier → (Paiement | Agenda | Affectation↔Avocat)
+ *
+ * Collections : clients, dossiers, paiements, agenda, avocats, affectations
  */
 const gestionRoutes: RouteRecordRaw[] = [
+  // —— Client ——
   {
     path: '/gestion/clients',
     component: Layout,
@@ -21,7 +22,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Clients',
       icon: 'i-carbon:user-multiple',
       auth: PERMISSIONS.clients,
-      sort: 45,
+      sort: 60,
     },
     children: [
       {
@@ -36,8 +37,21 @@ const gestionRoutes: RouteRecordRaw[] = [
           auth: PERMISSIONS.clients,
         },
       },
+      {
+        path: ':clientId',
+        name: 'clientDetail',
+        component: () => import('@/views/clients/detail.vue'),
+        meta: {
+          title: 'Fiche client',
+          menu: false,
+          breadcrumb: true,
+          activeMenu: '/gestion/clients',
+          auth: PERMISSIONS.clients,
+        },
+      },
     ],
   },
+  // —— Dossier ——
   {
     path: '/gestion/dossiers',
     component: Layout,
@@ -46,7 +60,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       icon: 'i-carbon:folder',
       auth: PERMISSIONS.dossiers,
       expand: true,
-      sort: 40,
+      sort: 50,
     },
     children: [
       {
@@ -85,18 +99,6 @@ const gestionRoutes: RouteRecordRaw[] = [
         },
       },
       {
-        path: 'client/:clientId',
-        name: 'clientDetail',
-        component: () => import('@/views/clients/detail.vue'),
-        meta: {
-          title: 'Fiche client',
-          menu: false,
-          breadcrumb: true,
-          activeMenu: '/gestion/dossiers',
-          auth: PERMISSIONS.dossiers,
-        },
-      },
-      {
         path: ':dossierId/fiche',
         name: 'dossierFiche',
         component: () => import('@/views/dossiers/fiche.vue'),
@@ -111,6 +113,15 @@ const gestionRoutes: RouteRecordRaw[] = [
     ],
   },
   {
+    path: '/gestion/dossiers/client/:clientId',
+    redirect: (to) => ({
+      path: `/gestion/clients/${String(to.params.clientId ?? '')}`,
+      query: to.query,
+      hash: to.hash,
+    }),
+    meta: { menu: false, breadcrumb: false },
+  },
+  {
     path: '/gestion/pieces-juridiques',
     redirect: (to) => ({
       path: '/gestion/dossiers/pieces-juridiques',
@@ -123,6 +134,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       breadcrumb: false,
     },
   },
+  // —— Agenda (lié à Dossier) ——
   {
     path: '/gestion/agenda',
     component: Layout,
@@ -130,7 +142,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Agenda',
       icon: 'i-carbon:calendar',
       auth: PERMISSIONS.agenda,
-      sort: 30,
+      sort: 45,
     },
     children: [
       {
@@ -147,6 +159,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  // —— Documents (hors entités UML principales) ——
   {
     path: '/gestion/note-honoraire',
     component: Layout,
@@ -154,7 +167,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Note honoraire',
       icon: 'i-carbon:document',
       auth: PERMISSIONS.noteHonoraire,
-      sort: 20,
+      sort: 35,
     },
     children: [
       {
@@ -171,6 +184,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       },
     ],
   },
+  // —— Paiement (lié à Dossier) ——
   {
     path: '/gestion/paiement',
     component: Layout,
@@ -178,7 +192,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Paiements',
       icon: 'i-carbon:wallet',
       auth: PERMISSIONS.paiements,
-      expand: true,
+      sort: 40,
     },
     children: [
       {
@@ -188,12 +202,15 @@ const gestionRoutes: RouteRecordRaw[] = [
         meta: {
           title: 'Gérer les paiements',
           icon: 'i-carbon:wallet',
+          menu: false,
+          breadcrumb: false,
+          activeMenu: '/gestion/paiement',
           auth: PERMISSIONS.paiements,
-          sort: 10,
         },
       },
     ],
   },
+  // —— Avocat + Affectation ——
   {
     path: '/gestion/avocats',
     component: Layout,
@@ -202,6 +219,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       icon: 'i-carbon:user-certification',
       auth: PERMISSIONS.avocats,
       expand: true,
+      sort: 30,
     },
     children: [
       {
@@ -209,7 +227,7 @@ const gestionRoutes: RouteRecordRaw[] = [
         name: 'avocats',
         component: () => import('@/views/avocat/index.vue'),
         meta: {
-          title: 'Gestion des avocats',
+          title: 'Avocats et affectations',
           icon: 'i-carbon:user-certification',
           auth: PERMISSIONS.avocats,
           sort: 20,
@@ -248,6 +266,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Tableau de bord',
       icon: 'i-carbon:chart-multitype',
       auth: PERMISSIONS.rapportsBi,
+      sort: 20,
     },
     children: [
       {
@@ -271,6 +290,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Rapport synthétique',
       icon: 'i-carbon:report',
       auth: PERMISSIONS.rapports,
+      sort: 15,
     },
     children: [
       {
@@ -294,6 +314,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Utilisateurs',
       icon: 'i-carbon:user-admin',
       auth: PERMISSIONS.utilisateurs,
+      sort: 10,
     },
     children: [
       {
@@ -317,6 +338,7 @@ const gestionRoutes: RouteRecordRaw[] = [
       title: 'Journal d’audit',
       icon: 'i-carbon:activity',
       auth: PERMISSIONS.audit,
+      sort: 5,
     },
     children: [
       {

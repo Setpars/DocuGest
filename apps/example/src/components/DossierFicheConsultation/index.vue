@@ -25,6 +25,7 @@ const props = defineProps<{
   error: string
   dossierId: string
   canNoteHonoraire?: boolean
+  canAgenda?: boolean
   canPaiements?: boolean
   canPieces?: boolean
   canAvocats?: boolean
@@ -119,6 +120,13 @@ function stripHtmlPreview(html: string, max = 280): string {
           class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
         >
           Note d’honoraires
+        </RouterLink>
+        <RouterLink
+          v-if="canAgenda"
+          :to="{ name: 'agenda', query: { dossierId } }"
+          class="rounded-xl bg-sky-100 px-4 py-2 text-sm font-medium text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
+        >
+          Agenda
         </RouterLink>
         <RouterLink
           v-if="canPaiements && dossierEstSuivi"

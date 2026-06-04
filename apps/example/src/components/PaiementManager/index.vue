@@ -97,7 +97,10 @@ const filterMode = ref<'' | TypePaiement>('')
 const filterStatut = ref<'' | PaiementStatut>('')
 const filterDevise = ref<'' | Devise>('')
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(15)
+const sortKey = ref<'date' | 'dossier' | 'versement' | 'reste'>('date')
+const sortDir = ref<'asc' | 'desc'>('desc')
+const PAGE_SIZE_OPTIONS = [10, 15, 25, 50] as const
 
 const showForm = ref(false)
 const showDetail = ref(false)
@@ -218,9 +221,45 @@ watch(
   },
 )
 
-watch([search, filterDossierId, filterNature, filterMode, filterStatut, filterDevise], () => {
+watch([search, filterDossierId, filterNature, filterMode, filterStatut, filterDevise, pageSize], () => {
   currentPage.value = 1
 })
+
+const hasActiveFilters = computed(() =>
+  Boolean(
+    search.value.trim()
+    || filterDossierId.value
+    || filterNature.value
+    || filterMode.value
+    || filterStatut.value
+    || filterDevise.value,
+  ),
+)
+
+function clearFilters() {
+  search.value = ''
+  filterDossierId.value = ''
+  filterNature.value = ''
+  filterMode.value = ''
+  filterStatut.value = ''
+  filterDevise.value = ''
+  currentPage.value = 1
+}
+
+function toggleSort(key: typeof sortKey.value) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = key === 'date' ? 'desc' : 'asc'
+  }
+  currentPage.value = 1
+}
+
+function sortIndicator(key: typeof sortKey.value) {
+  if (sortKey.value !== key) return ''
+  return sortDir.value === 'asc' ? ' ↑' : ' ↓'
+}
 
 function resetForm(dossierId = '', natureStockee = 'Honoraires') {
   const id = dossierId || filterDossierId.value || ''
@@ -448,14 +487,64 @@ const filteredPaiements = computed(() => {
   })
 })
 
+const sortedFilteredPaiements = computed(() => {
+  const list = [...filteredPaiements.value]
+  const dir = sortDir.value === 'asc' ? 1 : -1
+
+  list.sort((a, b) => {
+    if (sortKey.value === 'date') {
+      return dir * String(a.date_paiement).localeCompare(String(b.date_paiement))
+    }
+    if (sortKey.value === 'dossier') {
+      return dir * getDossierLabel(a.dossierId).localeCompare(getDossierLabel(b.dossierId), 'fr')
+    }
+    if (sortKey.value === 'versement') {
+      return dir * ((Number(a.montant_payer) || 0) - (Number(b.montant_payer) || 0))
+    }
+    const resteA = getSummaryForDossier(a.dossierId).reste
+    const resteB = getSummaryForDossier(b.dossierId).reste
+    return dir * (resteA - resteB)
+  })
+
+  return list
+})
+
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil(filteredPaiements.value.length / pageSize.value)),
+  Math.max(1, Math.ceil(sortedFilteredPaiements.value.length / pageSize.value)),
 )
+
+const paginationRange = computed(() => {
+  const total = sortedFilteredPaiements.value.length
+  if (total === 0) return { from: 0, to: 0, total: 0 }
+  const from = (currentPage.value - 1) * pageSize.value + 1
+  const to = Math.min(currentPage.value * pageSize.value, total)
+  return { from, to, total }
+})
 
 const paginatedPaiements = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  return filteredPaiements.value.slice(start, start + pageSize.value)
+  return sortedFilteredPaiements.value.slice(start, start + pageSize.value)
 })
+
+type PaiementRowView = {
+  paiement: Paiement
+  dossierLabel: string
+  dossierCount: number
+  nature: string
+  honoraires: boolean
+  summary: ReturnType<typeof getDossierPaiementSummary>
+}
+
+const paginatedRows = computed((): PaiementRowView[] =>
+  paginatedPaiements.value.map((paiement) => ({
+    paiement,
+    dossierLabel: getDossierLabel(paiement.dossierId),
+    dossierCount: (paiementsParDossier.value.get(paiement.dossierId) ?? []).length,
+    nature: getNaturePaiementLabel(paiement.nature_paiement),
+    honoraires: isPaiementHonoraires(paiement),
+    summary: getSummaryForDossier(paiement.dossierId),
+  })),
+)
 
 const totals = computed(() => {
   const list = filteredPaiements.value.length ? filteredPaiements.value : paiements.value
@@ -644,12 +733,26 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
       </section>
 
       <section class="mb-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Filtres</p>
+          <button
+            v-if="hasActiveFilters"
+            type="button"
+            class="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-900/30"
+            @click="clearFilters"
+          >
+            Réinitialiser
+          </button>
+        </div>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <input
-            v-model="search"
-            class="rounded-xl border px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 sm:col-span-2 xl:col-span-3"
-            placeholder="Rechercher (dossier, description, montant…)"
-          />
+          <div class="relative sm:col-span-2 xl:col-span-3">
+            <span class="pointer-events-none absolute left-3 top-1/2 text-slate-400 -translate-y-1/2 i-carbon:search" />
+            <input
+              v-model="search"
+              class="w-full rounded-xl border py-2.5 pl-10 pr-4 text-sm dark:border-slate-700 dark:bg-slate-800"
+              placeholder="Rechercher dossier, nature, description, montant…"
+            />
+          </div>
           <select v-model="filterDevise" class="w-full rounded-xl border px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800">
             <option value="">Toutes les devises</option>
             <option v-for="opt in DEVISE_OPTIONS" :key="opt.value" :value="opt.value">
@@ -678,8 +781,10 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
             <option value="partiel">Partiel</option>
             <option value="en_attente">En attente</option>
           </select>
-          <p class="flex items-center text-sm text-slate-500 sm:col-span-2 xl:col-span-3">
-            {{ filteredPaiements.length }} paiement(s) affiché(s)
+          <p class="flex flex-wrap items-center gap-2 text-sm text-slate-500 sm:col-span-2 xl:col-span-3">
+            <span class="font-medium text-slate-700 dark:text-slate-300">{{ sortedFilteredPaiements.length }}</span>
+            paiement(s) · tri {{ sortKey === 'date' ? 'date' : sortKey === 'dossier' ? 'dossier' : sortKey === 'versement' ? 'versement' : 'reste' }}
+            {{ sortDir === 'desc' ? '↓' : '↑' }}
           </p>
         </div>
       </section>
@@ -689,7 +794,15 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
       </section>
 
       <section v-else-if="paginatedPaiements.length === 0" class="rounded-2xl bg-white p-12 text-center shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
-        <p class="text-slate-500">Aucun paiement trouvé.</p>
+        <p class="text-slate-500">{{ hasActiveFilters ? 'Aucun paiement ne correspond aux filtres.' : 'Aucun paiement enregistré.' }}</p>
+        <button
+          v-if="hasActiveFilters"
+          type="button"
+          class="mt-3 text-sm text-blue-600 hover:underline dark:text-blue-400"
+          @click="clearFilters"
+        >
+          Effacer les filtres
+        </button>
         <AppButtonGuard class="mt-4" :blocked="!canAddPayment" :reason="addPaymentBlockedReason">
           <button
             type="button"
@@ -706,111 +819,175 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
       <section v-else class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
         <div class="space-y-3 p-4 md:hidden">
           <article
-            v-for="paiement in paginatedPaiements"
-            :key="`card-${paiement.id}`"
-            class="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800"
+            v-for="row in paginatedRows"
+            :key="`card-${row.paiement.id}`"
+            class="cursor-pointer rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-colors active:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:active:bg-slate-700"
+            @click="openDetail(row.paiement)"
           >
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="text-xs text-slate-500">
-                  {{ formatDateFr(paiement.date_paiement) }} · {{ natureLabel(paiement) }} · {{ paiement.type_paiement }}
+                  {{ formatDateFr(row.paiement.date_paiement) }} · {{ row.nature }} · {{ row.paiement.type_paiement }}
                 </p>
                 <p class="mt-1 font-medium leading-snug">
-                  {{ getDossierLabel(paiement.dossierId) }}
+                  {{ row.dossierLabel }}
+                </p>
+                <p v-if="row.paiement.description" class="mt-1 line-clamp-1 text-xs text-slate-500">
+                  {{ row.paiement.description }}
                 </p>
               </div>
               <span
+                v-if="row.honoraires"
                 class="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium"
-                :class="STATUT_META[getSummaryForDossier(paiement.dossierId).statut].badgeClass"
+                :class="STATUT_META[row.summary.statut].badgeClass"
               >
-                {{ STATUT_META[getSummaryForDossier(paiement.dossierId).statut].label }}
+                {{ STATUT_META[row.summary.statut].label }}
               </span>
             </div>
-            <dl class="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <dl class="mt-3 grid grid-cols-2 gap-2 text-sm tabular-nums">
               <div>
                 <dt class="text-xs text-slate-500">Versement</dt>
-                <dd class="font-medium text-emerald-600">
-                  {{ formatMoney(paiement.montant_payer, paiement.devise) }}
+                <dd class="font-semibold text-emerald-600">
+                  {{ formatMoney(row.paiement.montant_payer, row.paiement.devise) }}
                 </dd>
               </div>
-              <div>
+              <div v-if="row.honoraires">
                 <dt class="text-xs text-slate-500">Reste dossier</dt>
-                <dd class="font-medium text-amber-600">
-                  {{ formatMoney(getSummaryForDossier(paiement.dossierId).reste, getSummaryForDossier(paiement.dossierId).devise) }}
+                <dd class="font-semibold text-amber-600">
+                  {{ formatMoney(row.summary.reste, row.summary.devise) }}
                 </dd>
               </div>
             </dl>
-            <div class="mt-3 flex flex-wrap gap-2">
-              <button type="button" class="rounded-lg bg-slate-200 px-2.5 py-1.5 text-xs dark:bg-slate-700" @click="openDetail(paiement)">
-                Détail
-              </button>
-              <button type="button" class="rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs text-blue-700 dark:bg-blue-900/40" @click="openEdit(paiement)">
+            <div class="mt-3 flex flex-wrap gap-2" @click.stop>
+              <button type="button" class="rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs text-blue-700 dark:bg-blue-900/40" @click="openEdit(row.paiement)">
                 Modifier
               </button>
-              <button type="button" class="rounded-lg bg-rose-100 px-2.5 py-1.5 text-xs text-rose-700 dark:bg-rose-900/40" @click="remove(paiement.id)">
+              <button type="button" class="rounded-lg bg-rose-100 px-2.5 py-1.5 text-xs text-rose-700 dark:bg-rose-900/40" @click="remove(row.paiement.id)">
                 Supprimer
               </button>
             </div>
           </article>
         </div>
 
-        <div class="hidden overflow-x-auto md:block">
-          <table class="w-full min-w-[900px] text-left text-sm">
-            <thead class="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+        <div class="hidden max-h-[min(70vh,720px)] overflow-auto md:block">
+          <table class="w-full min-w-[960px] text-left text-sm">
+            <thead class="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 backdrop-blur dark:border-slate-700 dark:bg-slate-800/95">
               <tr>
-                <th class="px-4 py-3 font-medium">Date</th>
-                <th class="px-4 py-3 font-medium">Dossier lié</th>
-                <th class="px-4 py-3 font-medium">Nature</th>
-                <th class="px-4 py-3 font-medium">Mode</th>
-                <th class="px-4 py-3 font-medium">Devise</th>
-                <th class="px-4 py-3 font-medium">Total dossier</th>
-                <th class="px-4 py-3 font-medium">Versement</th>
-                <th class="px-4 py-3 font-medium">Reste dossier</th>
+                <th class="px-4 py-3 font-medium">
+                  <button type="button" class="hover:text-blue-600" @click="toggleSort('date')">
+                    Date{{ sortIndicator('date') }}
+                  </button>
+                </th>
+                <th class="min-w-[200px] px-4 py-3 font-medium">
+                  <button type="button" class="hover:text-blue-600" @click="toggleSort('dossier')">
+                    Dossier{{ sortIndicator('dossier') }}
+                  </button>
+                </th>
+                <th class="px-4 py-3 font-medium">Nature · Mode</th>
+                <th class="px-4 py-3 text-right font-medium">
+                  <button type="button" class="hover:text-blue-600" @click="toggleSort('versement')">
+                    Versement{{ sortIndicator('versement') }}
+                  </button>
+                </th>
+                <th class="px-4 py-3 text-right font-medium">Total dû</th>
+                <th class="px-4 py-3 text-right font-medium">
+                  <button type="button" class="hover:text-blue-600" @click="toggleSort('reste')">
+                    Reste{{ sortIndicator('reste') }}
+                  </button>
+                </th>
                 <th class="px-4 py-3 font-medium">État</th>
-                <th class="px-4 py-3 font-medium text-right">Actions</th>
+                <th class="sticky right-0 z-10 bg-slate-50/95 px-3 py-3 text-right font-medium backdrop-blur dark:bg-slate-800/95">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="paiement in paginatedPaiements"
-                :key="paiement.id"
-                class="border-b border-slate-100 dark:border-slate-800"
+                v-for="(row, index) in paginatedRows"
+                :key="row.paiement.id"
+                class="group cursor-pointer border-b border-slate-100 transition-colors hover:bg-blue-50/60 dark:border-slate-800 dark:hover:bg-blue-950/20"
+                :class="index % 2 === 1 ? 'bg-slate-50/50 dark:bg-slate-800/30' : ''"
+                @click="openDetail(row.paiement)"
               >
-                <td class="px-4 py-3 whitespace-nowrap">{{ formatDateFr(paiement.date_paiement) }}</td>
-                <td class="px-4 py-3">
-                  <div class="max-w-xs font-medium">{{ getDossierLabel(paiement.dossierId) }}</div>
-                  <div class="text-xs text-slate-500">
-                    {{ (paiementsParDossier.get(paiement.dossierId) ?? []).length }} paiement(s) sur ce dossier
+                <td class="px-4 py-3 whitespace-nowrap tabular-nums text-slate-600 dark:text-slate-400">
+                  {{ formatDateFr(row.paiement.date_paiement) }}
+                </td>
+                <td class="max-w-[280px] px-4 py-3">
+                  <div class="truncate font-medium" :title="row.dossierLabel">
+                    {{ row.dossierLabel }}
                   </div>
-                </td>
-                <td class="px-4 py-3">{{ natureLabel(paiement) }}</td>
-                <td class="px-4 py-3">{{ paiement.type_paiement }}</td>
-                <td class="px-4 py-3">{{ paiement.devise }}</td>
-                <td class="px-4 py-3">
-                  {{ formatMoney(getSummaryForDossier(paiement.dossierId).montantDu, getSummaryForDossier(paiement.dossierId).devise) }}
-                </td>
-                <td class="px-4 py-3 text-emerald-600">{{ formatMoney(paiement.montant_payer, paiement.devise) }}</td>
-                <td class="px-4 py-3 text-amber-600">
-                  {{ formatMoney(getSummaryForDossier(paiement.dossierId).reste, getSummaryForDossier(paiement.dossierId).devise) }}
+                  <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                    <span>{{ row.dossierCount }} paiement(s)</span>
+                    <span v-if="row.paiement.description" class="truncate max-w-[12rem]" :title="row.paiement.description">
+                      · {{ row.paiement.description }}
+                    </span>
+                  </div>
                 </td>
                 <td class="px-4 py-3">
                   <span
-                    class="rounded-full px-2.5 py-0.5 text-xs font-medium"
-                    :class="STATUT_META[getSummaryForDossier(paiement.dossierId).statut].badgeClass"
+                    class="inline-block rounded-md px-2 py-0.5 text-xs font-medium"
+                    :class="row.honoraires ? 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200' : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'"
                   >
-                    {{ STATUT_META[getSummaryForDossier(paiement.dossierId).statut].label }}
+                    {{ row.nature }}
                   </span>
+                  <span class="mt-1 block text-xs text-slate-500">{{ row.paiement.type_paiement }} · {{ row.paiement.devise }}</span>
+                </td>
+                <td class="px-4 py-3 text-right font-semibold whitespace-nowrap text-emerald-600 tabular-nums">
+                  {{ formatMoney(row.paiement.montant_payer, row.paiement.devise) }}
+                </td>
+                <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums text-slate-600 dark:text-slate-400">
+                  <template v-if="row.honoraires">
+                    {{ formatMoney(row.summary.montantDu, row.summary.devise) }}
+                  </template>
+                  <span v-else class="text-slate-400">—</span>
+                </td>
+                <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                  <template v-if="row.honoraires">
+                    <span :class="row.summary.reste > 0 ? 'font-medium text-amber-600' : 'text-emerald-600'">
+                      {{ formatMoney(row.summary.reste, row.summary.devise) }}
+                    </span>
+                  </template>
+                  <span v-else class="text-slate-400">—</span>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="flex justify-end gap-2">
-                    <button type="button" class="rounded-lg bg-slate-200 px-2.5 py-1.5 text-xs dark:bg-slate-700" @click="openDetail(paiement)">
-                      Détail
+                  <span
+                    v-if="row.honoraires"
+                    class="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                    :class="STATUT_META[row.summary.statut].badgeClass"
+                  >
+                    {{ STATUT_META[row.summary.statut].label }}
+                  </span>
+                  <span v-else class="text-xs text-slate-400">Frais</span>
+                </td>
+                <td
+                  class="sticky right-0 px-2 py-2 text-right transition-colors group-hover:bg-blue-50/60 dark:group-hover:bg-blue-950/20"
+                  :class="index % 2 === 1 ? 'bg-slate-50/50 dark:bg-slate-800/30' : 'bg-white dark:bg-slate-900'"
+                  @click.stop
+                >
+                  <div class="inline-flex gap-0.5">
+                    <button
+                      type="button"
+                      class="rounded-lg p-2 text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700"
+                      title="Voir le détail"
+                      @click="openDetail(row.paiement)"
+                    >
+                      <span class="i-carbon:view text-base" />
                     </button>
-                    <button type="button" class="rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs text-blue-700 dark:bg-blue-900/40" @click="openEdit(paiement)">
-                      Modifier
+                    <button
+                      type="button"
+                      class="rounded-lg p-2 text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                      title="Modifier"
+                      @click="openEdit(row.paiement)"
+                    >
+                      <span class="i-carbon:edit text-base" />
                     </button>
-                    <button type="button" class="rounded-lg bg-rose-100 px-2.5 py-1.5 text-xs text-rose-700 dark:bg-rose-900/40" @click="remove(paiement.id)">
-                      Supprimer
+                    <button
+                      type="button"
+                      class="rounded-lg p-2 text-rose-700 hover:bg-rose-100 dark:text-rose-300 dark:hover:bg-rose-900/40"
+                      title="Supprimer"
+                      @click="remove(row.paiement.id)"
+                    >
+                      <span class="i-carbon:trash-can text-base" />
                     </button>
                   </div>
                 </td>
@@ -820,16 +997,57 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
         </div>
 
         <div
-          v-if="totalPages > 1"
           class="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700"
         >
-          <p class="text-sm text-slate-500">Page {{ currentPage }} / {{ totalPages }}</p>
-          <div class="flex flex-wrap gap-2">
-            <button type="button" class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700" :disabled="currentPage === 1" @click="currentPage -= 1">
+          <div class="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+            <span v-if="paginationRange.total > 0">
+              {{ paginationRange.from }}–{{ paginationRange.to }} sur {{ paginationRange.total }}
+            </span>
+            <label class="inline-flex items-center gap-2">
+              <span class="text-xs">Par page</span>
+              <select
+                v-model.number="pageSize"
+                class="rounded-lg border px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800"
+              >
+                <option v-for="size in PAGE_SIZE_OPTIONS" :key="size" :value="size">
+                  {{ size }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <div v-if="totalPages > 1" class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"
+              :disabled="currentPage === 1"
+              @click="currentPage = 1"
+            >
+              Début
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"
+              :disabled="currentPage === 1"
+              @click="currentPage -= 1"
+            >
               Précédent
             </button>
-            <button type="button" class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700" :disabled="currentPage === totalPages" @click="currentPage += 1">
+            <span class="px-2 text-sm tabular-nums">{{ currentPage }} / {{ totalPages }}</span>
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"
+              :disabled="currentPage === totalPages"
+              @click="currentPage += 1"
+            >
               Suivant
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"
+              :disabled="currentPage === totalPages"
+              @click="currentPage = totalPages"
+            >
+              Fin
             </button>
           </div>
         </div>

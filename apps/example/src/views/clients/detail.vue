@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import ClientFormFields from '@/components/ClientFormFields/index.vue'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
-import type { ClientWithDossiers } from '@/types/client'
+import {
+  clientFormFromRecord,
+  type ClientFormData,
+  type ClientWithDossiers,
+} from '@/types/client'
+import { writeAuditLog } from '@/utils/audit-log'
 import { formatDateFr } from '@/utils/date'
 import { formatAvocatsLabel } from '@/utils/affectation'
 import { parseDossierResultat, RESULTAT_ISSUE_META } from '@/utils/dossier-resultat'
@@ -16,9 +22,29 @@ const clientsStore = useDomainClientsStore()
 
 const loading = ref(true)
 const error = ref('')
+const saveError = ref('')
 const client = ref<ClientWithDossiers | null>(null)
+const isEditing = ref(false)
+const saving = ref(false)
+const clientForm = ref<ClientFormData>({
+  clientId: null,
+  nom: '',
+  genre: '',
+  nationalite: '',
+  adresse: '',
+  numTel: '',
+})
 
 const clientId = computed(() => String(route.params.clientId ?? ''))
+
+const canEditClient = computed(() =>
+  Boolean(clientId.value && !clientId.value.startsWith('dossier:')),
+)
+
+const saveBlockedReason = computed(() => {
+  if (!clientForm.value.nom.trim()) return 'Le nom est obligatoire.'
+  return ''
+})
 
 const openDossiers = computed(() =>
   (client.value?.dossiers ?? []).filter((d) => d.statut === 'Ouvert' || d.statut === 'En cours'),
@@ -45,9 +71,28 @@ const statutClass: Record<string, string> = {
   Clos: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
 }
 
+function applyClientToForm() {
+  if (!client.value) return
+  clientForm.value = clientFormFromRecord(client.value)
+}
+
+function startEdit() {
+  if (!canEditClient.value || !client.value) return
+  applyClientToForm()
+  saveError.value = ''
+  isEditing.value = true
+}
+
+function cancelEdit() {
+  isEditing.value = false
+  saveError.value = ''
+  applyClientToForm()
+}
+
 async function load() {
   loading.value = true
   error.value = ''
+  isEditing.value = false
   try {
     if (!clientId.value) {
       error.value = 'Client introuvable.'
@@ -55,12 +100,39 @@ async function load() {
     }
     client.value = await clientsStore.fetchClientDetail(clientId.value)
     if (!client.value) error.value = 'Ce client n’existe pas ou a été supprimé.'
+    else applyClientToForm()
   } catch {
     error.value = 'Erreur lors du chargement de la fiche client.'
   } finally {
     loading.value = false
   }
 }
+
+async function saveClient() {
+  if (saving.value || saveBlockedReason.value) return
+  saving.value = true
+  saveError.value = ''
+  try {
+    clientForm.value.clientId = clientId.value
+    await clientsStore.updateClient(clientForm.value)
+    await writeAuditLog({
+      action: 'modification',
+      entity: 'client',
+      entityId: clientId.value,
+      details: clientForm.value.nom,
+    })
+    isEditing.value = false
+    await load()
+  } catch (err) {
+    saveError.value = err instanceof Error ? err.message : 'Erreur lors de l’enregistrement.'
+  } finally {
+    saving.value = false
+  }
+}
+
+watch(clientId, () => {
+  void load()
+})
 
 onMounted(() => {
   void load()
@@ -95,14 +167,71 @@ onMounted(() => {
 
       <template v-else-if="client">
         <section class="mb-6 rounded-2xl bg-card p-6 ring-1 ring-border">
-          <p class="text-primary text-xs font-semibold tracking-wide uppercase">
-            Informations personnelles
-          </p>
-          <h2 class="mt-1 text-xl font-semibold">
-            {{ client.nom }}
-          </h2>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-primary text-xs font-semibold tracking-wide uppercase">
+                Informations personnelles
+              </p>
+              <h2 v-if="!isEditing" class="mt-1 text-xl font-semibold">
+                {{ client.nom }}
+              </h2>
+              <h2 v-else class="mt-1 text-xl font-semibold">
+                Modifier le client
+              </h2>
+            </div>
+            <div v-if="canEditClient && !isEditing" class="flex gap-2">
+              <button
+                type="button"
+                class="rounded-xl border border-border px-3 py-2 text-sm font-medium hover:bg-accent"
+                @click="startEdit"
+              >
+                Modifier
+              </button>
+            </div>
+          </div>
 
-          <dl class="mt-4 grid gap-3 sm:grid-cols-2">
+          <p
+            v-if="!canEditClient"
+            class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+          >
+            Fiche déduite d’un dossier sans enregistrement client dédié. Ouvrez le dossier pour mettre à jour le client.
+          </p>
+
+          <form
+            v-if="isEditing"
+            class="mt-4"
+            @submit.prevent="saveClient"
+          >
+            <ClientFormFields
+              v-model="clientForm"
+              edit-existing
+              hint="Les dossiers liés à ce client seront mis à jour automatiquement."
+              input-class="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm"
+            />
+            <p v-if="saveError" class="mt-3 text-sm text-rose-600 dark:text-rose-400">
+              {{ saveError }}
+            </p>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button
+                type="submit"
+                class="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                :disabled="saving || Boolean(saveBlockedReason)"
+                :title="saveBlockedReason"
+              >
+                {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
+              </button>
+              <button
+                type="button"
+                class="rounded-xl border border-border px-4 py-2 text-sm"
+                :disabled="saving"
+                @click="cancelEdit"
+              >
+                Annuler
+              </button>
+            </div>
+          </form>
+
+          <dl v-else class="mt-4 grid gap-3 sm:grid-cols-2">
             <div>
               <dt class="text-muted-foreground text-xs uppercase">
                 Genre
