@@ -1,0 +1,13 @@
+# Alternative à Vercel — https://app.netlify.com
+[build]
+  command = "corepack enable && pnpm install && pnpm run build:example"
+  publish = "apps/example/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NPM_FLAGS = "--version"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

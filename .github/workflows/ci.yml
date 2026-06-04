@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-example:
+    runs-on: ubuntu-latest
+    env:
+      # Valeurs factices pour valider le build (remplacer en prod via l’hébergeur)
+      VITE_APP_TITLE: DocuGest
+      VITE_APP_API_BASEURL: /
+      VITE_APP_STORAGE_PREFIX: fa_ci_
+      VITE_APP_SETTING: 'true'
+      VITE_FIREBASE_API_KEY: ci-placeholder
+      VITE_FIREBASE_AUTH_DOMAIN: ci-placeholder.firebaseapp.com
+      VITE_FIREBASE_PROJECT_ID: ci-placeholder
+      VITE_FIREBASE_STORAGE_BUCKET: ci-placeholder.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000'
+      VITE_FIREBASE_APP_ID: '1:000000000000:web:ci000000000000'
+      VITE_BUILD_FAKE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck example app
+        run: pnpm --filter @fantastic-admin/example run lint
+
+      - name: Build example app
+        run: pnpm run build:example

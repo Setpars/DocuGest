@@ -1,0 +1,110 @@
+/**
+ * Masque le chrome de l’application (menu, barre du haut, onglets)
+ * pour que le contenu imprimé ne soit pas recouvert.
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm 10mm 14mm;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Barres et navigation fixes */
+  .app-offline-banner,
+  .slots-layout-top,
+  .slots-layout-bottom,
+  .sidebar-container,
+  .main-sidebar-container,
+  .sub-sidebar-container,
+  .floating-sidebar-menu-button,
+  .fixed-content-around-area,
+  #fixed-content-before-area,
+  #fixed-content-after-area,
+  .copyright,
+  .topbar,
+  header,
+  .layout > .fixed,
+  .layout > .flex-center.fixed,
+  [class*="Hotkeys"],
+  .hotkeys {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Annule le décalage prévu pour les barres fixes */
+  .layout,
+  .wrapper,
+  .main-container,
+  #app-content,
+  .main {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    translate: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  .main-container {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  /* Contenu des pages métier (fiche, pièces, notes) */
+  .fiche-consultation-no-print {
+    display: none !important;
+  }
+
+  .fiche-consultation-print-root {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .fiche-consultation-print-root .fiche-doc--screen {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  .note-no-print,
+  .piece-no-print,
+  .rapport-screen-only {
+    display: none !important;
+  }
+
+  .rapport-print-only {
+    display: block !important;
+  }
+
+  .rapport-page {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .rapport-document {
+    max-width: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+}

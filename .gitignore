@@ -1,0 +1,58 @@
+# Dépendances
+node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+dist-*/
+**/dist/
+**/dist-*/
+
+# Variables d'environnement (secrets — ne jamais committer)
+.env.local
+.env.*.local
+apps/**/.env.local
+
+# Fichiers locaux Vite
+*.local
+
+# Caches outils
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+.turbo
+.cache/
+
+# Hébergeurs
+.vercel
+.netlify
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE (garder les recommandations d’extensions si besoin)
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# Archives / artefacts
+*.zip
+*.tar
+*.tgz
+
+# Tests / couverture
+coverage/
+.nyc_output/
+
+# Divers
+*.local.md

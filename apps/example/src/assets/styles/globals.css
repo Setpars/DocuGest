@@ -1,0 +1,189 @@
+@import './print-layout.css';
+
+/* 页面布局 CSS 变量 */
+:root {
+  color-scheme: light;
+
+  /* 头部宽度（默认自适应宽度，可固定宽度，固定宽度后为居中显示） */
+  --g-header-width: 100%;
+
+  /* 头部高度 */
+  --g-header-height: 60px;
+
+  /* 侧边栏宽度 */
+  --g-main-sidebar-width: 80px;
+  --g-sub-sidebar-width: 220px;
+  --g-sub-sidebar-collapse-width: 64px;
+
+  /* 侧边栏 Logo 区域高度 */
+  --g-sidebar-logo-height: 50px;
+
+  /* 标签栏高度 */
+  --g-tabbar-height: 50px;
+
+  /* 工具栏高度 */
+  --g-toolbar-height: 50px;
+
+  &.dark {
+    color-scheme: dark;
+  }
+}
+
+/* Fond sombre bleu — léger dégradé sur la zone principale */
+.dark #app {
+  background: linear-gradient(
+    165deg,
+    oklch(0.13 0.048 258) 0%,
+    oklch(0.16 0.044 262) 45%,
+    oklch(0.14 0.042 255) 100%
+  );
+}
+
+/* 明暗模式过渡动画 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation: none;
+}
+
+::view-transition-old(root) {
+  z-index: 0;
+}
+
+::view-transition-new(root) {
+  z-index: 1;
+}
+
+.dark {
+  &::view-transition-old(root) {
+    z-index: 1;
+  }
+
+  &::view-transition-new(root) {
+    z-index: 0;
+  }
+}
+
+.disable-color-scheme-transition-duration *,
+.disable-color-scheme-transition-duration *::before,
+.disable-color-scheme-transition-duration *::after {
+  transition-duration: 0ms !important;
+}
+
+html,
+body {
+  height: 100%;
+  text-autospace: normal;
+}
+
+body {
+  box-sizing: border-box;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  height: 100%;
+}
+
+/* textarea 字体跟随系统 */
+textarea {
+  font-family: inherit;
+}
+
+/* Popups / modales : au-dessus du header (z-1030) et non rognées par .main */
+:root {
+  --app-overlay-z: 5000;
+}
+
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="select-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-reka-popper-content-wrapper] {
+  z-index: var(--app-overlay-z) !important;
+}
+
+.app-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--app-overlay-z);
+  overflow-y: auto;
+  padding: 0.75rem;
+  background: rgb(0 0 0 / 60%);
+  backdrop-filter: blur(4px);
+}
+
+@media (width >= 640px) {
+  .app-modal-overlay {
+    padding: 1rem;
+  }
+}
+
+.app-modal-overlay__wrap {
+  display: flex;
+  min-height: 100%;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.app-modal-overlay__wrap--center {
+  align-items: center;
+  justify-content: center;
+}
+
+.app-modal-overlay__wrap--start {
+  align-items: flex-start;
+  justify-content: center;
+  padding-block: 1.5rem;
+}
+
+.app-modal-overlay__dialog {
+  display: flex;
+  width: 100%;
+  max-height: min(92dvh, calc(100dvh - 1.5rem));
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: oklch(var(--card));
+  color: oklch(var(--card-foreground));
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 35%);
+}
+
+@media (width >= 640px) {
+  .app-modal-overlay__dialog {
+    max-height: min(90dvh, calc(100vh - 2rem));
+    border-radius: 1.5rem;
+  }
+}
+
+.app-modal-overlay__header {
+  flex-shrink: 0;
+  border-bottom: 1px solid oklch(var(--border));
+  padding: 1rem 1.25rem;
+}
+
+@media (width >= 640px) {
+  .app-modal-overlay__header {
+    padding: 1rem 1.5rem;
+  }
+}
+
+.app-modal-overlay__body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-modal-overlay__footer {
+  flex-shrink: 0;
+  border-top: 1px solid oklch(var(--border));
+  padding: 1rem 1.25rem;
+}
+
+@media (width >= 640px) {
+  .app-modal-overlay__footer {
+    padding: 1rem 1.5rem;
+  }
+}
