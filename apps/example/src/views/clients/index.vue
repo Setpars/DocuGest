@@ -178,13 +178,20 @@ function canOpenDetail(client: ClientRecord) {
                 {{ row.avocatsLabel }}
               </td>
               <td class="px-4 py-3 text-right">
-                <RouterLink
-                  v-if="canOpenDetail(row.client)"
-                  :to="{ name: 'clientDetail', params: { clientId: row.client.id } }"
-                  class="text-primary font-medium hover:underline"
-                >
-                  Ouvrir / modifier
-                </RouterLink>
+                <div v-if="canOpenDetail(row.client)" class="flex flex-wrap justify-end gap-2">
+                  <RouterLink
+                    :to="{ name: 'clientDetail', params: { clientId: row.client.id } }"
+                    class="rounded-lg border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent"
+                  >
+                    Fiche
+                  </RouterLink>
+                  <RouterLink
+                    :to="{ name: 'clientDetail', params: { clientId: row.client.id }, query: { edit: '1' } }"
+                    class="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
+                  >
+                    Modifier
+                  </RouterLink>
+                </div>
                 <span v-else class="text-muted-foreground text-xs">Fiche à consolider</span>
               </td>
             </tr>

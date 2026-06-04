@@ -99,8 +99,14 @@ async function load() {
       return
     }
     client.value = await clientsStore.fetchClientDetail(clientId.value)
-    if (!client.value) error.value = 'Ce client n’existe pas ou a été supprimé.'
-    else applyClientToForm()
+    if (!client.value) {
+      error.value = 'Ce client n’existe pas ou a été supprimé.'
+    } else {
+      applyClientToForm()
+      if (route.query.edit === '1' && canEditClient.value) {
+        isEditing.value = true
+      }
+    }
   } catch {
     error.value = 'Erreur lors du chargement de la fiche client.'
   } finally {
