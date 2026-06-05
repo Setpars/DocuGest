@@ -1,6 +1,6 @@
 # Alternative à Vercel — https://app.netlify.com
 [build]
-  command = "corepack enable && pnpm install && pnpm run build:example"
+  command = "corepack enable && pnpm install && pnpm --filter @fantastic-admin/example run build"
   publish = "apps/example/dist"
 
 [build.environment]

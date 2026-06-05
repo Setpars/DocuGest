@@ -75,7 +75,7 @@ pnpm --filter @fantastic-admin/example run serve
 2. **Root Directory** : laisser la racine du repo (où se trouve `vercel.json`).
 3. Vercel détecte `vercel.json` :
    - Install : `corepack enable && pnpm install`
-   - Build : `pnpm run build:example`
+   - Build : `pnpm --filter @fantastic-admin/example run build` (défini dans `vercel.json`)
    - Output : `apps/example/dist`
 4. **Environment Variables** (Production) — ajouter toutes les clés de `apps/example/.env.example`, surtout les 6 `VITE_FIREBASE_*`.
 5. **Deploy**.
@@ -113,6 +113,7 @@ Après déploiement, dans Firebase Console → **Authentication** → **Authoriz
 | Build échoue sur `VITE_FIREBASE_*` | Variables manquantes dans le tableau de bord hébergeur |
 | Page blanche après refresh | Rewrites SPA (`vercel.json` / `netlify.toml`) |
 | `pnpm` introuvable sur Vercel | `corepack enable` (déjà dans `vercel.json`) |
+| `ERR_PNPM_NO_SCRIPT` / `build :example` | **Root Directory** = racine du repo (pas `apps/example`). Commande sans espace : `build:example` ou `pnpm --filter @fantastic-admin/example run build`. Ne pas surcharger la commande de build dans le tableau Vercel si `vercel.json` est utilisé. |
 | Données mock au lieu de Firestore | `VITE_BUILD_FAKE=false` en production |
 | Hooks pre-commit en CI | Normal en local ; Vercel n’exécute pas les commits |
 

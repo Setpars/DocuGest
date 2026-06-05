@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:example": "vue-tsc -b && vite build",
     "build:test": "vue-tsc -b && vite build --mode test",
     "serve": "http-server ./dist -o",
     "serve:test": "http-server ./dist-test -o",
