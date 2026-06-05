@@ -4,7 +4,6 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDocs,
   updateDoc,
 } from 'firebase/firestore'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -15,7 +14,7 @@ import DynamicSelect from '@/components/DynamicSelect/index.vue'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import { collectUniqueStrings } from '@/utils/collect-field-suggestions'
 import { PERMISSIONS } from '@/constants/permissions'
-import { DEVISE_OPTIONS, normalizeDevise, formatMoney, type Devise } from '@/utils/currency'
+import { DEVISE_OPTIONS, formatMoney, type Devise } from '@/utils/currency'
 import {
   clientFormFromDossierFields,
   clientFormFromRecord,
@@ -30,34 +29,13 @@ import {
   type DossierAvocatSummary,
 } from '@/utils/affectation'
 import { parseDossierResultat, RESULTAT_ISSUE_META } from '@/utils/dossier-resultat'
+import {
+  mapDossierDocFromRaw,
+  type DossierListView,
+  type DossierStatut,
+} from '@/utils/dossier-view-map'
 
-type DossierStatut = 'Ouvert' | 'En cours' | 'Suspendu' | 'Clos'
-
-type Dossier = {
-  id: string
-  motif: string
-  partie_en_cause: string
-  date_ouverture: string
-  date_fermeture: string | null
-  resume_affaire: string
-  statut: DossierStatut
-  juridiction: string
-  clientId?: string
-  clientNom: string
-  clientGenre?: string
-  clientNationalite?: string
-  clientAdresse?: string
-  clientTelephone: string
-  montantHonorairesTotal: number
-  deviseHonoraires: Devise
-  avocatId?: string
-  resultat?: string
-}
-
-type Avocat = {
-  id: string
-  nom: string
-}
+type Dossier = DossierListView
 
 type Affectation = AffectationRecord & {
   date_affectation?: string
@@ -84,22 +62,22 @@ const STATUT_META: Record<DossierStatut, { label: string, badgeClass: string }> 
 }
 
 const dossiersCol = collection(db, 'dossiers')
-const affectationsCol = collection(db, 'affectations')
-const avocatsCol = collection(db, 'avocats')
 const route = useRoute()
 const router = useRouter()
 const clientsStore = useDomainClientsStore()
 const { auth: hasAuth } = useAppAuth()
 const canManagePaiements = computed(() => hasAuth(PERMISSIONS.paiements))
-const dossiers = ref<Dossier[]>([])
 const shouldOpenFromClientQuery = ref(
   typeof route.query.clientId === 'string' && route.query.clientId.length > 0,
 )
-const affectations = ref<Affectation[]>([])
-const avocats = ref<Avocat[]>([])
+const dossiers = computed(() =>
+  clientsStore.dossiersRaw.map((item) => mapDossierDocFromRaw(item)),
+)
+const affectations = computed(() => clientsStore.affectationsRaw as Affectation[])
+const avocats = computed(() => clientsStore.avocatsRaw)
 const search = ref('')
 const filterStatut = ref<'' | DossierStatut>('')
-const loading = ref(false)
+const loading = computed(() => clientsStore.loading && !clientsStore.loaded)
 const saving = ref(false)
 const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
 const selectedJurisdiction = ref<string | null>(null)
@@ -174,68 +152,15 @@ function isDossierAssigne(dossier: Dossier): boolean {
   return getDossierAvocats(dossier).length > 0
 }
 
-function mapDossierDoc(currentDoc: { id: string, data: () => Record<string, unknown> | object }): Dossier {
-  const data = currentDoc.data() as Record<string, unknown>
-  return {
-    id: currentDoc.id,
-    motif: String(data.motif ?? data.titre ?? ''),
-    partie_en_cause: String(data.partie_en_cause ?? data.reference ?? ''),
-    date_ouverture: String(data.date_ouverture ?? data.createdAt ?? ''),
-    date_fermeture: data.date_fermeture ? String(data.date_fermeture) : null,
-    resume_affaire: String(data.resume_affaire ?? data.description ?? ''),
-    statut: (String(data.statut ?? 'Ouvert') as DossierStatut) || 'Ouvert',
-    juridiction: String(data.juridiction ?? ''),
-    clientId: data.clientId ? String(data.clientId) : undefined,
-    clientNom: String(data.clientNom ?? data.nom_client ?? data.client ?? ''),
-    clientGenre: String(data.clientGenre ?? ''),
-    clientNationalite: String(data.clientNationalite ?? ''),
-    clientAdresse: String(data.clientAdresse ?? ''),
-    clientTelephone: String(data.clientTelephone ?? data.telephone ?? ''),
-    montantHonorairesTotal: Number(data.montantHonorairesTotal ?? 0),
-    deviseHonoraires: normalizeDevise(data.deviseHonoraires),
-    avocatId: String(data.avocatId ?? ''),
-    resultat: String(data.resultat ?? ''),
-  }
-}
-
 function updateOnlineStatus() {
   isOnline.value = typeof navigator !== 'undefined' ? navigator.onLine : true
 }
 
-async function loadData() {
-  loading.value = true
-  try {
-    const [dSnap, affSnap, aSnap] = await Promise.all([
-      getDocs(dossiersCol),
-      getDocs(affectationsCol),
-      getDocs(avocatsCol),
-    ])
-    try {
-      await clientsStore.loadRegistry(true)
-    } catch {
-      // Registre client : rechargé à l’enregistrement du dossier
-    }
-
-    avocats.value = aSnap.docs.map((currentDoc) => ({
-      id: currentDoc.id,
-      nom: String((currentDoc.data() as Record<string, unknown>).nom ?? ''),
-    }))
-
-    affectations.value = affSnap.docs.map((currentDoc) => ({
-      id: currentDoc.id,
-      ...(currentDoc.data() as Omit<Affectation, 'id'>),
-    }))
-
-    dossiers.value = dSnap.docs.map((currentDoc) => mapDossierDoc(currentDoc))
-
-    if (shouldOpenFromClientQuery.value) {
-      shouldOpenFromClientQuery.value = false
-      await openAdd()
-    }
-  } catch {
-    showToast('error', 'Erreur lors du chargement des dossiers')
-  } finally {
-    loading.value = false
+async function initPage() {
+  await clientsStore.loadRegistry()
+  if (shouldOpenFromClientQuery.value) {
+    shouldOpenFromClientQuery.value = false
+    await openAdd()
   }
 }
 
@@ -246,8 +171,14 @@ function openDossierFromQuery() {
   if (dossier) view(dossier)
 }
 
+watch(dossiers, (list) => {
+  if (!selected.value) return
+  const updated = list.find((item) => item.id === selected.value?.id)
+  if (updated) selected.value = updated
+})
+
 onMounted(() => {
-  loadData().then(() => openDossierFromQuery())
+  initPage().then(() => openDossierFromQuery())
   updateOnlineStatus()
   window.addEventListener('online', updateOnlineStatus)
   window.addEventListener('offline', updateOnlineStatus)
@@ -436,7 +367,6 @@ async function save() {
       return
     }
 
-    await clientsStore.loadRegistry()
     const clientSnapshot = await clientsStore.syncForDossier(clientForm.value)
     if (!clientSnapshot) {
       showToast('error', 'Le nom du client est obligatoire.')
@@ -470,7 +400,6 @@ async function save() {
     }
 
     closeForm()
-    await loadData()
   } catch (error: unknown) {
     const code = String((error as { code?: string })?.code || '')
     if (code.includes('unavailable') || code.includes('failed-precondition')) {
@@ -502,7 +431,6 @@ async function remove(id: string) {
     )
     await deleteDoc(doc(db, 'dossiers', id))
     showToast('success', 'Dossier supprimé')
-    await loadData()
     if (selected.value?.id === id) showDetail.value = false
   } catch {
     showToast('error', 'Erreur lors de la suppression')

@@ -1,13 +1,9 @@
 <script setup lang="ts">
-import {
-  collection,
-  getDocs,
-} from 'firebase/firestore'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { PIECES_JURIDIQUES_COMING_SOON } from '@/constants/features'
-import { db } from '@/firebase'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
+import { mapDossierDocFromRaw, type DossierStatut } from '@/utils/dossier-view-map'
 import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
 import { collectUniqueStrings } from '@/utils/collect-field-suggestions'
 import {
@@ -18,8 +14,6 @@ import {
 defineOptions({
   name: 'DossiersEnCours',
 })
-
-type DossierStatut = 'Ouvert' | 'En cours' | 'Suspendu' | 'Clos'
 
 type Dossier = {
   id: string
@@ -32,16 +26,6 @@ type Dossier = {
   clientNom: string
   clientTelephone: string
   avocatId?: string
-}
-
-type Avocat = { id: string, nom: string }
-
-type Affectation = {
-  id: string
-  avocatId?: string
-  avocat_id?: string
-  dossierId?: string
-  dossier_id?: string
 }
 
 const STATUT_META: Record<'Ouvert' | 'En cours', { label: string, badgeClass: string }> = {
@@ -57,30 +41,30 @@ const STATUT_META: Record<'Ouvert' | 'En cours', { label: string, badgeClass: st
 
 const router = useRouter()
 const clientsStore = useDomainClientsStore()
-const dossiersCol = collection(db, 'dossiers')
-const affectationsCol = collection(db, 'affectations')
-const avocatsCol = collection(db, 'avocats')
 
-const dossiers = ref<Dossier[]>([])
-const affectations = ref<Affectation[]>([])
-const avocats = ref<Avocat[]>([])
-const loading = ref(false)
+const dossiers = computed(() =>
+  clientsStore.dossiersRaw
+    .map((item) => mapDossierDocFromRaw(item))
+    .filter((item) => item.statut === 'En cours' || item.statut === 'Ouvert')
+    .map((item) => ({
+      id: item.id,
+      motif: item.motif,
+      partie_en_cause: item.partie_en_cause,
+      date_ouverture: item.date_ouverture,
+      resume_affaire: item.resume_affaire,
+      statut: item.statut === 'En cours' ? 'En cours' as const : 'Ouvert' as const,
+      juridiction: item.juridiction,
+      clientNom: item.clientNom,
+      clientTelephone: item.clientTelephone,
+      avocatId: item.avocatId,
+    })),
+)
+const affectations = computed(() => clientsStore.affectationsRaw)
+const avocats = computed(() => clientsStore.avocatsRaw)
+const loading = computed(() => clientsStore.loading && !clientsStore.loaded)
 const search = ref('')
 const filterStatut = ref<'' | 'Ouvert' | 'En cours'>('')
 const selectedJurisdiction = ref<string | null>(null)
-
-const toast = ref({
-  show: false,
-  type: 'success' as 'success' | 'error',
-  message: '',
-})
-
-function showToast(type: 'success' | 'error', message: string) {
-  toast.value = { show: true, type, message }
-  setTimeout(() => {
-    toast.value.show = false
-  }, 3000)
-}
 
 function formatDate(value?: string) {
   if (!value) return '—'
@@ -91,23 +75,6 @@ function formatDate(value?: string) {
     month: '2-digit',
     year: 'numeric',
   })
-}
-
-function mapDossier(currentDoc: { id: string, data: () => Record<string, unknown> | object }): Dossier {
-  const data = currentDoc.data() as Record<string, unknown>
-  const statut = String(data.statut ?? 'Ouvert') as DossierStatut
-  return {
-    id: currentDoc.id,
-    motif: String(data.motif ?? data.titre ?? ''),
-    partie_en_cause: String(data.partie_en_cause ?? data.reference ?? ''),
-    date_ouverture: String(data.date_ouverture ?? data.createdAt ?? ''),
-    resume_affaire: String(data.resume_affaire ?? data.description ?? ''),
-    statut: statut === 'En cours' ? 'En cours' : statut === 'Ouvert' ? 'Ouvert' : statut,
-    juridiction: String(data.juridiction ?? ''),
-    clientNom: String(data.clientNom ?? data.nom_client ?? ''),
-    clientTelephone: String(data.clientTelephone ?? data.telephone ?? ''),
-    avocatId: data.avocatId ? String(data.avocatId) : undefined,
-  }
 }
 
 const avocatNameMap = computed(() => {
@@ -129,38 +96,9 @@ function getSuiviLabel(dossier: Dossier) {
   )
 }
 
-async function loadData() {
-  loading.value = true
-  try {
-    const [dSnap, affSnap, aSnap] = await Promise.all([
-      getDocs(dossiersCol),
-      getDocs(affectationsCol),
-      getDocs(avocatsCol),
-    ])
-    avocats.value = aSnap.docs.map((d) => ({
-      id: d.id,
-      nom: String((d.data() as Record<string, unknown>).nom ?? ''),
-    }))
-    affectations.value = affSnap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<Affectation, 'id'>),
-    }))
-    dossiers.value = dSnap.docs
-      .map((d) => mapDossier(d))
-      .filter((d) => d.statut === 'En cours' || d.statut === 'Ouvert')
-    try {
-      await clientsStore.loadRegistry(true)
-    } catch {
-      // Filtre juridictions : liste locale uniquement
-    }
-  } catch {
-    showToast('error', 'Impossible de charger les dossiers en cours')
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(loadData)
+onMounted(() => {
+  void clientsStore.loadRegistry()
+})
 
 watch([search, filterStatut, selectedJurisdiction], () => {})
 
@@ -205,14 +143,6 @@ function openRedaction(_dossierId: string) {
 
 <template>
   <div class="text-foreground min-h-full">
-    <div
-      v-if="toast.show"
-      class="fixed right-6 top-6 z-[2100] rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg"
-      :class="toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'"
-    >
-      {{ toast.message }}
-    </div>
-
     <div class="mx-auto max-w-[1600px] p-4 sm:p-6">
       <header class="mb-6 flex flex-col gap-4 rounded-2xl bg-card px-6 py-5 shadow-sm ring-1 ring-border lg:flex-row lg:items-center lg:justify-between">
         <div>

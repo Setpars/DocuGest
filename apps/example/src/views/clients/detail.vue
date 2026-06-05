@@ -128,7 +128,7 @@ async function saveClient() {
       details: clientForm.value.nom,
     })
     isEditing.value = false
-    await load()
+    refreshClientFromStore()
   } catch (err) {
     saveError.value = err instanceof Error ? err.message : 'Erreur lors de l’enregistrement.'
   } finally {
@@ -136,9 +136,29 @@ async function saveClient() {
   }
 }
 
+function refreshClientFromStore() {
+  if (!clientId.value || loading.value) return
+  const next = clientsStore.getClientDetail(clientId.value)
+  if (!next) {
+    if (!clientsStore.loading) error.value = 'Ce client n’existe pas ou a été supprimé.'
+    return
+  }
+  error.value = ''
+  client.value = next
+  if (!isEditing.value) applyClientToForm()
+}
+
 watch(clientId, () => {
   void load()
 })
+
+watch(
+  () => [clientsStore.registry, clientsStore.dossiersRaw, clientsStore.affectationsRaw] as const,
+  () => {
+    if (client.value && clientId.value) refreshClientFromStore()
+  },
+  { deep: true },
+)
 
 onMounted(() => {
   void load()

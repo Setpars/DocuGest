@@ -4,15 +4,18 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDocs,
+  onSnapshot,
   updateDoc,
+  type Unsubscribe,
 } from 'firebase/firestore'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { COLLECTIONS } from '@/constants/collections'
 import { agendaToFirestore, mapAgendaFromFirestore } from '@/domain/mappers'
 import { db } from '@/firebase'
+import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import type { AgendaEntry, AgendaFormData, AgendaType } from '@/types/agenda'
+import { dossierPickerFromRaw } from '@/utils/dossier-view-map'
 import { writeAuditLog } from '@/utils/audit-log'
 
 defineOptions({
@@ -60,11 +63,18 @@ const TYPE_META: Record<AgendaType, { label: string, badge: string, dot: string 
 }
 
 const route = useRoute()
+const clientsStore = useDomainClientsStore()
 const agendaCol = collection(db, COLLECTIONS.agenda)
 
 const entries = ref<AgendaEntry[]>([])
-const dossiers = ref<Array<{ id: string, motif: string, clientNom: string }>>([])
-const loading = ref(false)
+const loading = ref(true)
+let agendaUnsub: Unsubscribe | null = null
+
+const dossiers = computed(() =>
+  clientsStore.dossiersRaw
+    .map((item) => dossierPickerFromRaw(item))
+    .sort((a, b) => a.motif.localeCompare(b.motif, 'fr')),
+)
 const saving = ref(false)
 const viewDate = ref(new Date())
 const selectedDate = ref(toDateKey(new Date()))
@@ -125,46 +135,40 @@ function getDossierLabel(dossierId: string): string {
   return `${dossier.motif || 'Dossier'}${client}`
 }
 
-async function loadDossiers() {
-  try {
-    const snap = await getDocs(collection(db, COLLECTIONS.dossier))
-    dossiers.value = snap.docs
-      .map((item) => {
-        const data = item.data() as Record<string, unknown>
-        return {
-          id: item.id,
-          motif: String(data.motif ?? data.titre ?? ''),
-          clientNom: String(data.clientNom ?? data.nom_client ?? ''),
-        }
-      })
-      .sort((a, b) => a.motif.localeCompare(b.motif, 'fr'))
-  } catch {
-    dossiers.value = []
-  }
+function sortEntries(list: AgendaEntry[]) {
+  return [...list].sort((a, b) => {
+    const cmpDate = a.date.localeCompare(b.date)
+    if (cmpDate !== 0) return cmpDate
+    return a.heure.localeCompare(b.heure)
+  })
 }
 
-async function loadEntries() {
+function startAgendaRealtime() {
+  agendaUnsub?.()
   loading.value = true
-  try {
-    const snap = await getDocs(agendaCol)
-    entries.value = snap.docs
-      .map((currentDoc) => mapEntry(currentDoc))
-      .sort((a, b) => {
-        const cmpDate = a.date.localeCompare(b.date)
-        if (cmpDate !== 0) return cmpDate
-        return a.heure.localeCompare(b.heure)
-      })
-  } catch {
-    showToast('error', 'Impossible de charger l’agenda')
-  } finally {
-    loading.value = false
-  }
+  agendaUnsub = onSnapshot(
+    agendaCol,
+    (snap) => {
+      entries.value = sortEntries(snap.docs.map((currentDoc) => mapEntry(currentDoc)))
+      loading.value = false
+    },
+    () => {
+      showToast('error', 'Impossible de synchroniser l’agenda')
+      loading.value = false
+    },
+  )
 }
 
-onMounted(async () => {
+onMounted(() => {
   const qDossier = typeof route.query.dossierId === 'string' ? route.query.dossierId : ''
   if (qDossier) filterDossierId.value = qDossier
-  await Promise.all([loadDossiers(), loadEntries()])
+  void clientsStore.loadRegistry()
+  startAgendaRealtime()
+})
+
+onBeforeUnmount(() => {
+  agendaUnsub?.()
+  agendaUnsub = null
 })
 
 const calendarYear = computed(() => viewDate.value.getFullYear())
@@ -350,7 +354,6 @@ async function saveEntry() {
     }
 
     closeForm()
-    await loadEntries()
     selectedDate.value = form.value.date
     viewDate.value = new Date(`${form.value.date}T12:00:00`)
   } catch {
@@ -367,7 +370,6 @@ async function removeEntry(id: string) {
     await writeAuditLog({ action: 'suppression', entity: 'agenda', entityId: id })
     showToast('success', 'Événement supprimé')
     closeDetail()
-    await loadEntries()
   } catch {
     showToast('error', 'Erreur lors de la suppression')
   }

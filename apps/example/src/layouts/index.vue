@@ -13,10 +13,13 @@ import SubSidebar from './components/SubSidebar/index.vue'
 import Topbar from './components/Topbar/index.vue'
 import LinkView from './components/views/link.vue'
 import AppOfflineBanner from '@/components/AppOfflineBanner/index.vue'
+import { useDomainRealtime } from '@/composables/useDomainRealtime'
 
 defineOptions({
   name: 'Layout',
 })
+
+useDomainRealtime()
 
 const routeInfo = useRoute()
 

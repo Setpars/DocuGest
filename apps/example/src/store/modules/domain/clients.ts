@@ -1,16 +1,16 @@
+import { collection, onSnapshot, type Unsubscribe } from 'firebase/firestore'
+import { COLLECTIONS } from '@/constants/collections'
+import { mapAffectationFromFirestore, mapAvocatFromFirestore, mapClientFromFirestore } from '@/domain/mappers'
 import { db } from '@/firebase'
-import { fetchAllAffectations, fetchAvocatNameMap } from '@/services/affectation'
 import {
   buildClientRegistry,
-  fetchAllClients,
-  fetchAllDossiersRaw,
   filterDossiersForClient,
   findExactClientInRegistry,
   getClientById,
-  loadClientWithDossiers,
   searchClientsInRegistry,
   syncClientForDossier,
   updateClientById,
+  type DossierRawRecord,
 } from '@/services/client-dossier'
 import type { ClientFormData, ClientRecord, ClientWithDossiers } from '@/types/client'
 import { collectFromRecords, collectUniqueStrings } from '@/utils/collect-field-suggestions'
@@ -24,35 +24,119 @@ import {
 const DEFAULT_GENRES = ['Masculin', 'Féminin', 'Autre']
 
 export const useDomainClientsStore = defineStore('domainClients', () => {
-  const registry = ref<ClientRecord[]>([])
-  const dossiersRaw = ref<Record<string, unknown>[]>([])
+  const clientsRaw = ref<ClientRecord[]>([])
+  const dossiersRaw = ref<DossierRawRecord[]>([])
   const affectationsRaw = ref<AffectationRecord[]>([])
+  const avocatsRaw = ref<Array<{ id: string, nom: string }>>([])
   const avocatNames = ref<Record<string, string>>({})
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref('')
+  const realtimeActive = ref(false)
 
-  async function loadRegistry(force = false) {
-    if (loaded.value && !force) return
+  const registry = computed(() => buildClientRegistry(clientsRaw.value, dossiersRaw.value))
+
+  let unsubs: Unsubscribe[] = []
+
+  function rebuildAvocatNames() {
+    const map: Record<string, string> = {}
+    for (const avocat of avocatsRaw.value) {
+      map[avocat.id] = avocat.nom
+    }
+    avocatNames.value = map
+  }
+
+  function startRealtime() {
+    if (realtimeActive.value) return
+    realtimeActive.value = true
     loading.value = true
     error.value = ''
-    try {
-      const [clients, dossiers, affectations, avocats] = await Promise.all([
-        fetchAllClients(db),
-        fetchAllDossiersRaw(db),
-        fetchAllAffectations(db),
-        fetchAvocatNameMap(db),
-      ])
-      dossiersRaw.value = dossiers
-      affectationsRaw.value = affectations
-      avocatNames.value = avocats
-      registry.value = buildClientRegistry(clients, dossiers)
-      loaded.value = true
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Erreur chargement clients'
-      throw err
-    } finally {
-      loading.value = false
+
+    let pending = 4
+    const markReady = () => {
+      pending -= 1
+      if (pending <= 0) loading.value = false
+    }
+
+    unsubs = [
+      onSnapshot(
+        collection(db, COLLECTIONS.client),
+        (snap) => {
+          clientsRaw.value = snap.docs.map((item) =>
+            mapClientFromFirestore(item.id, item.data() as Record<string, unknown>),
+          )
+          loaded.value = true
+          markReady()
+        },
+        (err) => {
+          error.value = err.message || 'Erreur synchronisation clients'
+          markReady()
+        },
+      ),
+      onSnapshot(
+        collection(db, COLLECTIONS.dossier),
+        (snap) => {
+          dossiersRaw.value = snap.docs.map((item) => ({
+            id: item.id,
+            ...(item.data() as Record<string, unknown>),
+          }))
+          loaded.value = true
+          markReady()
+        },
+        (err) => {
+          error.value = err.message || 'Erreur synchronisation dossiers'
+          markReady()
+        },
+      ),
+      onSnapshot(
+        collection(db, COLLECTIONS.affectation),
+        (snap) => {
+          affectationsRaw.value = snap.docs.map((item) =>
+            mapAffectationFromFirestore(item.id, item.data() as Record<string, unknown>),
+          )
+          markReady()
+        },
+        (err) => {
+          error.value = err.message || 'Erreur synchronisation affectations'
+          markReady()
+        },
+      ),
+      onSnapshot(
+        collection(db, COLLECTIONS.avocat),
+        (snap) => {
+          avocatsRaw.value = snap.docs.map((item) => {
+            const entity = mapAvocatFromFirestore(item.id, item.data() as Record<string, unknown>)
+            return { id: entity.id, nom: entity.nom }
+          })
+          rebuildAvocatNames()
+          markReady()
+        },
+        (err) => {
+          error.value = err.message || 'Erreur synchronisation avocats'
+          markReady()
+        },
+      ),
+    ]
+  }
+
+  function stopRealtime() {
+    for (const unsub of unsubs) unsub()
+    unsubs = []
+    realtimeActive.value = false
+    clientsRaw.value = []
+    dossiersRaw.value = []
+    affectationsRaw.value = []
+    avocatsRaw.value = []
+    avocatNames.value = {}
+    loaded.value = false
+    loading.value = false
+  }
+
+  async function loadRegistry(force = false) {
+    if (!realtimeActive.value) startRealtime()
+    else if (force) loading.value = !loaded.value
+    while (loading.value && !loaded.value) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
     }
   }
 
@@ -65,38 +149,37 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
   }
 
   async function syncForDossier(form: ClientFormData) {
-    const result = await syncClientForDossier(db, form, registry.value)
-    await loadRegistry(true)
-    return result
+    return syncClientForDossier(db, form, registry.value)
   }
 
   async function updateClient(form: ClientFormData) {
     const id = form.clientId?.trim()
     if (!id) throw new Error('Client introuvable.')
-    const result = await updateClientById(db, id, form, registry.value)
-    await loadRegistry(true)
-    return result
+    return updateClientById(db, id, form, registry.value)
   }
 
-  async function fetchClientDetail(clientId: string): Promise<ClientWithDossiers | null> {
-    await loadRegistry()
-    const fromDb = await loadClientWithDossiers(db, clientId)
-    if (fromDb) return fromDb
-
-    const fallback = registry.value.find((item) => item.id === clientId)
-    if (!fallback) return null
+  function getClientDetail(clientId: string): ClientWithDossiers | null {
+    const record =
+      clientsRaw.value.find((item) => item.id === clientId)
+      ?? registry.value.find((item) => item.id === clientId)
+    if (!record) return null
 
     const dossiers = filterDossiersForClient(
       dossiersRaw.value,
-      fallback,
+      record,
       affectationsRaw.value,
       avocatNames.value,
     )
     return {
-      ...fallback,
+      ...record,
       dossiers,
       dossiersCount: dossiers.length,
     }
+  }
+
+  async function fetchClientDetail(clientId: string): Promise<ClientWithDossiers | null> {
+    await loadRegistry()
+    return getClientDetail(clientId)
   }
 
   function getDossierAvocats(dossierId: string, legacyAvocatId?: string) {
@@ -129,6 +212,9 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
   }
 
   async function fetchClientRecord(clientId: string) {
+    await loadRegistry()
+    const cached = clientsRaw.value.find((item) => item.id === clientId)
+    if (cached) return cached
     return getClientById(db, clientId)
   }
 
@@ -166,18 +252,24 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
   )
 
   return {
+    clientsRaw,
     registry,
     dossiersRaw,
     affectationsRaw,
+    avocatsRaw,
     avocatNames,
     loading,
     loaded,
     error,
+    realtimeActive,
+    startRealtime,
+    stopRealtime,
     loadRegistry,
     searchByName,
     findExactByName,
     syncForDossier,
     updateClient,
+    getClientDetail,
     fetchClientDetail,
     fetchClientRecord,
     getDossierAvocats,
