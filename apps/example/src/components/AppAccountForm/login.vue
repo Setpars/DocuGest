@@ -2,6 +2,11 @@
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import * as z from 'zod'
+import {
+  applyAuthPersistence,
+  getRememberMePreference,
+  setRememberMePreference,
+} from '@/firebase/auth-persistence'
 import { AuthFirebaseError } from '@/services/auth-firebase'
 import { FormControl, FormField, FormItem, FormMessage } from '@/ui/shadcn/ui/form'
 import type { LoginAccountChoice } from '@/utils/login-directory'
@@ -61,7 +66,7 @@ const form = useForm({
   initialValues: {
     email: props.email ?? localStorage.getItem('login_email') ?? '',
     password: '',
-    remember: localStorage.getItem('login_email') !== null,
+    remember: getRememberMePreference(),
   },
 })
 
@@ -116,6 +121,8 @@ const onSubmit = form.handleSubmit(async (values) => {
   errorMessage.value = ''
   infoMessage.value = ''
   try {
+    setRememberMePreference(values.remember)
+    await applyAuthPersistence(values.remember)
     await appAccountStore.login({
       email: values.email,
       password: values.password,
@@ -147,7 +154,13 @@ async function onGoogleLogin() {
   errorMessage.value = ''
   infoMessage.value = ''
   try {
+    const remember = form.values.remember ?? getRememberMePreference()
+    setRememberMePreference(remember)
+    await applyAuthPersistence(remember)
     await appAccountStore.loginGoogle()
+    if (remember && appAccountStore.account) {
+      localStorage.setItem('login_email', appAccountStore.account)
+    }
     emits('onLogin', appAccountStore.account)
   } catch (err) {
     if (err instanceof AuthFirebaseError) {

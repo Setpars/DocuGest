@@ -1,6 +1,7 @@
 import { CABINET_HONORAIRES } from '@/constants/cabinet-honoraires'
 import { clientNamesMatch } from '@/utils/client-name'
 import { normalizeDevise, type Devise } from '@/utils/currency'
+import { NOTE_HONORAIRE_DOC_MARKER } from '@/utils/document-html-normalize'
 import { montantUsdEnLettres } from '@/utils/montant-en-lettres'
 
 export type LigneHonoraire = {
@@ -88,24 +89,9 @@ export function formatDestinataireNoteHonoraire(
   return `${prefix} ${brut}`
 }
 
-function buildPreambleDefault(
-  clientNom: string,
-  partieEnCause: string | undefined,
-  refAffaire: string,
-  juridiction: string,
-) {
-  const client = clientNom.trim()
-  const partie = partieEnCause?.trim()
-  let concernant = ''
-  if (client && partie) {
-    concernant = ` concernant notre client ${client}, dans le litige qui l’oppose à ${partie}`
-  } else if (client) {
-    concernant = ` concernant notre client ${client}`
-  } else if (partie) {
-    concernant = ` dans le cadre du dossier « ${refAffaire} » (partie adverse : ${partie})`
-  }
-
-  return `Conformément à la décision n° CNO/BIS/88 du 11 juillet 1988 modifiée par la décision n° CNO/4/90 du 22 décembre 1990, et suite au dossier « ${refAffaire} »${concernant}${juridiction !== '…' ? ` devant ${juridiction}` : ''}, nous avons l’honneur de vous adresser la présente note d’honoraires à notre client.`
+/** Texte juridique d’introduction — sans répéter les informations dossier (déjà dans le bloc métadonnées). */
+function buildPreambleLegal() {
+  return 'Conformément à la décision n° CNO/BIS/88 du 11 juillet 1988 modifiée par la décision n° CNO/4/90 du 22 décembre 1990, nous avons l’honneur de vous adresser la présente note d’honoraires pour l’intervention visée ci-dessus.'
 }
 
 /** Met à jour le destinataire dans une note déjà rédigée (ligne « A … » et formule de politesse). */
@@ -184,6 +170,120 @@ function resolveLignes(dossier: NoteHonoraireDossierInfo, _devise: Devise): Lign
   return scaled
 }
 
+function buildNoteHonoraireCabinetHeaderHtml(cabinet: typeof CABINET_HONORAIRES) {
+  return `<header data-note-section="cabinet">
+<table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+  <tr>
+    <td style="width:72%;vertical-align:top;padding-right:12px">
+      <p style="margin:0 0 6px;font-size:11pt;font-weight:bold;text-transform:uppercase;line-height:1.35">${cabinet.nom}</p>
+      <p style="margin:0 0 4px">${cabinet.adresse}</p>
+      <p style="margin:0 0 4px"><strong>Conseils :</strong> ${cabinet.conseillers}</p>
+      <p style="margin:0"><strong>Tél. :</strong> ${cabinet.telephones}</p>
+    </td>
+    <td style="width:28%;vertical-align:top;text-align:center">
+      <div style="border:1px solid #999;border-radius:8px;padding:16px 8px;font-size:28pt;color:#b8860b" title="Logo cabinet">⚖</div>
+    </td>
+  </tr>
+</table>
+</header>`
+}
+
+function buildNoteHonoraireTitleHtml() {
+  return `<h1 data-note-section="title" style="margin:16px 0;text-align:center;font-size:13pt;font-weight:bold;text-decoration:underline;letter-spacing:0.04em">NOTE D&rsquo;HONORAIRES</h1>`
+}
+
+function buildNoteHonoraireDossierInfoHtml(input: {
+  ref: string
+  ville: string
+  dateLettre: string
+  motif: string
+  juridiction: string
+  clientNom: string
+  partieEnCause: string
+  resumeAffaire: string
+  objet: string
+  destinataire: string
+}) {
+  const juridictionLine = input.juridiction && input.juridiction !== '…'
+    ? `<p style="margin:4px 0"><strong>Juridiction :</strong> ${input.juridiction}</p>`
+    : ''
+  const clientLine = input.clientNom
+    ? `<p style="margin:4px 0"><strong>Client :</strong> ${input.clientNom}</p>`
+    : ''
+  const partieLine = input.partieEnCause
+    ? `<p style="margin:4px 0"><strong>Partie adverse :</strong> ${input.partieEnCause}</p>`
+    : ''
+  const resumeLine = input.resumeAffaire
+    ? `<p style="margin:8px 0;text-align:justify"><strong>Résumé :</strong> ${input.resumeAffaire}</p>`
+    : ''
+
+  return `<section data-note-section="dossier">
+<p style="margin:8px 0 4px"><strong>N° réf. :</strong> ${input.ref}</p>
+<p style="margin:0 0 12px;text-align:right">${input.ville}, le ${input.dateLettre}</p>
+<p style="margin:4px 0"><strong>Dossier :</strong> ${input.motif}</p>
+${juridictionLine}
+${clientLine}
+${partieLine}
+${resumeLine}
+<p style="margin:8px 0"><strong>OBJET :</strong> ${input.objet}</p>
+<p style="margin:16px 0;text-align:right"><strong><u>A ${input.destinataire}</u></strong></p>
+</section>`
+}
+
+function buildNoteHonoraireMainContentHtml(input: {
+  preamble: string
+  lignesHtml: string
+  totalChiffres: string
+  totalLettres: string
+  honorairesComplementairesPct: number
+  delaiPaiementHeures: number
+  destinataire: string
+  signataire: string
+  signataireQualite: string
+}) {
+  return `<section data-note-section="content">
+<p style="margin:16px 0;text-align:justify">${input.preamble}</p>
+
+<p style="margin:12px 0;text-align:justify">
+Les honoraires et frais se décomposent comme suit (Article 9 du chapitre III de la décision en matière civile et commerciale) :
+</p>
+
+<table style="width:100%;border-collapse:collapse;margin:16px 0">
+  <thead>
+    <tr style="background:#fff">
+      <th style="padding:8px 10px;border:1px solid #222;text-align:left">Désignation</th>
+      <th style="padding:8px 10px;border:1px solid #222;text-align:right;width:42%">Montant</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${input.lignesHtml}
+    <tr>
+      <td style="padding:10px;border:1px solid #222"><strong>TOTAL FRAIS</strong></td>
+      <td style="padding:10px;border:1px solid #222;text-align:right"><strong>${input.totalChiffres}</strong><br><strong style="font-size:10pt">(${input.totalLettres})</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<p style="margin:14px 0;text-align:justify"><strong>N.B. :</strong></p>
+<ul style="margin:8px 0 16px 20px;text-align:justify">
+  <li>Honoraires complémentaires fixés à <strong>${input.honorairesComplementairesPct} %</strong> des sommes recouvrées ou encaissées par le client.</li>
+  <li>Le règlement constitue une obligation du client ; nous vous prions de bien vouloir nous acquitter dans un délai de <strong>${input.delaiPaiementHeures} heures</strong> à compter de la réception de la présente. À défaut, nous nous verrons contraints d’engager les voies d’exécution forcée, la présente valant <em>mise en demeure</em>.</li>
+</ul>
+
+<p style="margin:20px 0;text-align:justify">
+Veuillez agréer, ${input.destinataire}, l’expression de notre considération distinguée.
+</p>
+
+<p style="margin:40px 0 8px;text-align:right">
+<strong>POUR LE CABINET,</strong><br>
+L’un de ses Conseils<br>
+<strong><u>${input.signataire}</u></strong><br>
+${input.signataireQualite}
+</p>
+<p style="margin:24px 0 0;text-align:right;font-size:10pt;color:#666">[Cachet et signature]</p>
+</section>`
+}
+
 /** Modèle aligné sur la note d’honoraires du cabinet (CCEAJ Maître KABASH & Confrères — Likasi). */
 export function buildNoteHonoraireHtml(
   dossier: NoteHonoraireDossierInfo,
@@ -209,76 +309,40 @@ export function buildNoteHonoraireHtml(
     genre: client.genre,
     partieEnCause: dossier.partieEnCause,
   })
-  const refAffaire = dossier.referenceAffaire || dossier.motif || '…'
+  const motif = dossier.referenceAffaire || dossier.motif || '…'
   const juridiction = dossier.juridiction || '…'
+  const resumeAffaire = dossier.resumeAffaire?.trim() || ''
 
   const lignesHtml = lignes.map(l => ligneHonoraireRow(l.designation, l.montant, devise)).join('')
   const totalChiffres = formatMontant(devise, total)
   const totalLettres = montantEnLettres(devise, total)
+  const preamble = buildPreambleLegal()
 
-  const preamble = dossier.resumeAffaire?.trim()
-    || buildPreambleDefault(client.nom, dossier.partieEnCause, refAffaire, juridiction)
-
-  return `<div style="font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.45;color:#111;max-width:210mm;margin:0 auto">
-
-<table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-  <tr>
-    <td style="width:72%;vertical-align:top;padding-right:12px">
-      <p style="margin:0 0 6px;font-size:11pt;font-weight:bold;text-transform:uppercase;line-height:1.35">${cabinet.nom}</p>
-      <p style="margin:0 0 4px">${cabinet.adresse}</p>
-      <p style="margin:0 0 4px"><strong>Conseils :</strong> ${cabinet.conseillers}</p>
-      <p style="margin:0"><strong>Tél. :</strong> ${cabinet.telephones}</p>
-    </td>
-    <td style="width:28%;vertical-align:top;text-align:center">
-      <div style="border:1px solid #999;border-radius:8px;padding:16px 8px;font-size:28pt;color:#b8860b" title="Logo cabinet">⚖</div>
-    </td>
-  </tr>
-</table>
-
-<p style="margin:12px 0 4px"><strong>N° réf. :</strong> ${ref}</p>
-<p style="margin:0 0 12px;text-align:right">${ville}, le ${dateLettre}</p>
-<p style="margin:8px 0"><strong>OBJET :</strong> ${objet}</p>
-<p style="margin:16px 0;text-align:right"><strong><u>A ${destinataire}</u></strong></p>
-
-<p style="margin:16px 0;text-align:justify">${preamble}</p>
-
-<p style="margin:12px 0;text-align:justify">
-Les honoraires et frais se décomposent comme suit (Article 9 du chapitre III de la décision en matière civile et commerciale) :
-</p>
-
-<table style="width:100%;border-collapse:collapse;margin:16px 0">
-  <thead>
-    <tr style="background:#f5f5f5">
-      <th style="padding:8px 10px;border:1px solid #222;text-align:left">Désignation</th>
-      <th style="padding:8px 10px;border:1px solid #222;text-align:right;width:42%">Montant</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${lignesHtml}
-    <tr>
-      <td style="padding:10px;border:1px solid #222"><strong>TOTAL FRAIS</strong></td>
-      <td style="padding:10px;border:1px solid #222;text-align:right"><strong>${totalChiffres}</strong><br><strong style="font-size:10pt">(${totalLettres})</strong></td>
-    </tr>
-  </tbody>
-</table>
-
-<p style="margin:14px 0;text-align:justify"><strong>N.B. :</strong></p>
-<ul style="margin:8px 0 16px 20px;text-align:justify">
-  <li>Honoraires complémentaires fixés à <strong>${cabinet.honorairesComplementairesPct} %</strong> des sommes recouvrées ou encaissées par le client.</li>
-  <li>Le règlement constitue une obligation du client ; nous vous prions de bien vouloir nous acquitter dans un délai de <strong>${cabinet.delaiPaiementHeures} heures</strong> à compter de la réception de la présente. À défaut, nous nous verrons contraints d’engager les voies d’exécution forcée, la présente valant <em>mise en demeure</em>.</li>
-</ul>
-
-<p style="margin:20px 0;text-align:justify">
-Veuillez agréer, ${destinataire}, l’expression de notre considération distinguée.
-</p>
-
-<p style="margin:40px 0 8px;text-align:right">
-<strong>POUR LE CABINET,</strong><br>
-L’un de ses Conseils<br>
-<strong><u>${cabinet.signataire}</u></strong><br>
-${cabinet.signataireQualite}
-</p>
-<p style="margin:24px 0 0;text-align:right;font-size:10pt;color:#666">[Cachet et signature]</p>
-
+  return `<div ${NOTE_HONORAIRE_DOC_MARKER}="1" style="font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.45;color:#111;max-width:210mm;margin:0 auto;background:#fff">
+${buildNoteHonoraireCabinetHeaderHtml(cabinet)}
+${buildNoteHonoraireTitleHtml()}
+${buildNoteHonoraireDossierInfoHtml({
+    ref,
+    ville,
+    dateLettre,
+    motif,
+    juridiction,
+    clientNom: client.nom,
+    partieEnCause: dossier.partieEnCause?.trim() || '',
+    resumeAffaire,
+    objet,
+    destinataire,
+  })}
+${buildNoteHonoraireMainContentHtml({
+    preamble,
+    lignesHtml,
+    totalChiffres,
+    totalLettres,
+    honorairesComplementairesPct: cabinet.honorairesComplementairesPct,
+    delaiPaiementHeures: cabinet.delaiPaiementHeures,
+    destinataire,
+    signataire: cabinet.signataire,
+    signataireQualite: cabinet.signataireQualite,
+  })}
 </div>`
 }

@@ -19,6 +19,7 @@ function mapDossierDoc(currentDoc: { id: string, data: () => Record<string, unkn
     motif: String(data.motif ?? data.titre ?? 'Sans intitulé'),
     clientNom: String(data.clientNom ?? data.nom_client ?? data.client ?? ''),
     juridiction: String(data.juridiction ?? ''),
+    statut: String(data.statut ?? 'Ouvert'),
     avocatId: String(data.avocatId ?? ''),
     montantHonorairesTotal: Number(data.montantHonorairesTotal ?? 0) || undefined,
     deviseHonoraires: normalizeDevise(data.deviseHonoraires ?? data.devise),

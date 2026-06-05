@@ -1,0 +1,20 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "dossier_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dossierId", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "affectations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dossierId", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -49,12 +49,13 @@ export async function loadDossierInsight(
   const dossierSnap = await getDoc(doc(firestore, 'dossiers', dossierId))
   if (!dossierSnap.exists()) return null
 
-  const [affSnap, paiSnap, docSnap, avocatNames] = await Promise.all([
+  const [affSnap, paiSnap, docSnap, avocatNamesResult] = await Promise.all([
     getDocs(collection(firestore, 'affectations')),
     getDocs(query(collection(firestore, 'paiements'), where('dossierId', '==', dossierId))),
     getDocs(query(collection(firestore, 'dossier_documents'), where('dossierId', '==', dossierId))),
-    fetchAvocatNameMap(firestore),
+    fetchAvocatNameMap(firestore).catch(() => ({} as Record<string, string>)),
   ])
+  const avocatNames = avocatNamesResult
 
   return buildDossierInsightFromParts(dossierId, {
     dossierBase: dossierSnap.data() as Record<string, unknown>,

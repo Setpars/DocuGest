@@ -1,18 +1,10 @@
-import {
-  browserLocalPersistence,
-  onAuthStateChanged,
-  setPersistence,
-  type User,
-} from 'firebase/auth'
-import { auth } from '@/firebase'
+import { onAuthStateChanged, type User } from 'firebase/auth'
+import { applyAuthPersistence } from './auth-persistence'
+import { auth } from './index'
 
-let persistenceConfigured = false
-
-/** Persistance locale (session conservée après F5). */
+/** Configure la persistance Auth selon la préférence « Se souvenir de moi ». */
 export async function configureAuthPersistence() {
-  if (persistenceConfigured) return
-  await setPersistence(auth, browserLocalPersistence)
-  persistenceConfigured = true
+  await applyAuthPersistence()
 }
 
 /**

@@ -17,6 +17,8 @@ export function subscribeDossierInsight(
   handlers: {
     onData: (insight: DossierInsight | null) => void
     onError: (message: string) => void
+    /** `false` uniquement après snapshot confirmant l’absence du document dossier. */
+    onDossierPresence?: (exists: boolean) => void
     onReady?: () => void
   },
 ): Unsubscribe {
@@ -35,6 +37,8 @@ export function subscribeDossierInsight(
   const unsubs: Unsubscribe[] = []
 
   function tryEmit() {
+    // Attendre le premier snapshot dossier avant toute émission (évite un faux « dossier introuvable »).
+    if (!readyFlags.dossier) return
     if (!parts.dossierBase) {
       handlers.onData(null)
       return
@@ -57,7 +61,10 @@ export function subscribeDossierInsight(
     avocatNamesReady = true
     tryEmit()
   }).catch(() => {
-    handlers.onError('Impossible de charger les avocats.')
+    // Ne pas bloquer la fiche : un dossier sans avocat assigné doit rester consultable.
+    parts.avocatNames = {}
+    avocatNamesReady = true
+    tryEmit()
   })
 
   unsubs.push(
@@ -66,10 +73,12 @@ export function subscribeDossierInsight(
       (snap) => {
         if (!snap.exists()) {
           parts.dossierBase = null
+          handlers.onDossierPresence?.(false)
           handlers.onData(null)
           markReady('dossier')
           return
         }
+        handlers.onDossierPresence?.(true)
         parts.dossierBase = snap.data() as Record<string, unknown>
         markReady('dossier')
       },

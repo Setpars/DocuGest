@@ -4,8 +4,8 @@ import type { AppUserRole } from '@/types/auth'
 export const PERMISSIONS = {
   clients: 'gestion.clients',
   dossiers: 'gestion.dossiers',
-  /** Consultation des dossiers actifs (rôle finances). */
-  dossiersEnCours: 'gestion.dossiers.en_cours',
+  /** Consultation des dossiers (lecture seule, sans création / édition). */
+  dossiersConsultation: 'gestion.dossiers.consultation',
   agenda: 'gestion.agenda',
   noteHonoraire: 'gestion.note_honoraire',
   piecesJuridiques: 'gestion.pieces_juridiques',
@@ -26,6 +26,7 @@ export const ROLE_PERMISSIONS: Record<AppUserRole, string[]> = {
     PERMISSIONS.piecesJuridiques,
   ],
   doyen: [
+    PERMISSIONS.dossiersConsultation,
     PERMISSIONS.avocats,
     PERMISSIONS.rapports,
     PERMISSIONS.rapportsBi,
@@ -34,9 +35,15 @@ export const ROLE_PERMISSIONS: Record<AppUserRole, string[]> = {
   ],
   finance: [
     PERMISSIONS.paiements,
-    PERMISSIONS.dossiersEnCours,
+    PERMISSIONS.dossiersConsultation,
   ],
 }
+
+/** Accès au module dossiers (gestion complète ou consultation). */
+export const AUTH_DOSSIERS = [
+  PERMISSIONS.dossiers,
+  PERMISSIONS.dossiersConsultation,
+] as const
 
 export function getPermissionsForRole(role: AppUserRole): string[] {
   return [...ROLE_PERMISSIONS[role]]

@@ -20,7 +20,7 @@ const props = withDefaults(
     inputClass:
       'w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800',
     editExisting: false,
-    hint: 'La fiche client est créée ou mise à jour à l’enregistrement du dossier.',
+    hint: 'Recherche par nom, téléphone ou e-mail. Si le client existe déjà, ses informations sont reprises sans modifier sa fiche.',
   },
 )
 
@@ -101,7 +101,7 @@ onMounted(() => {
       />
     </div>
 
-    <div class="sm:col-span-2">
+    <div>
       <label class="mb-1.5 block text-sm font-medium">Téléphone</label>
       <DynamicSelect
         v-model="form.numTel"
@@ -112,6 +112,17 @@ onMounted(() => {
         :input-class="inputClass"
         placeholder="Ex. +243 99 000 00 00"
       />
+    </div>
+
+    <div>
+      <label class="mb-1.5 block text-sm font-medium">E-mail</label>
+      <input
+        v-model="form.email"
+        type="email"
+        autocomplete="email"
+        :class="inputClass"
+        placeholder="Ex. client@exemple.com"
+      >
     </div>
   </div>
 </template>

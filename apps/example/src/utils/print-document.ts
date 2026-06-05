@@ -2,6 +2,10 @@ import { CABINET_PRINT } from '@/constants/cabinet-print'
 import type { DossierInsight } from '@/types/dossier-insight'
 import { buildFicheConsultationPrintHtml } from '@/utils/fiche-consultation-document'
 import { formatDateFr } from '@/utils/date'
+import {
+  normalizeNoteHonoraireHtml,
+  normalizePieceJuridiqueHtml,
+} from '@/utils/document-html-normalize'
 
 export { buildFicheConsultationPrintHtml } from '@/utils/fiche-consultation-document'
 
@@ -205,15 +209,19 @@ export type EditorPrintOptions = {
 }
 
 export function buildEditorDocumentPrintHtml(options: EditorPrintOptions): string {
-  const docTitle = options.documentKind === 'piece_juridique'
-    ? 'PIÈCE JURIDIQUE'
-    : 'NOTE D’HONORAIRES'
+  if (options.documentKind === 'note_honoraire') {
+    const contenuHtml = normalizeNoteHonoraireHtml(options.contenuHtml)
+    return buildPrintPageHtml({
+      title: options.title,
+      extraCss: PRINT_RICH_CONTENT_CSS,
+      bodyHtml: `<div class="print-body"><div class="print-content">${contenuHtml}</div></div>`,
+    })
+  }
 
+  const contenuHtml = normalizePieceJuridiqueHtml(options.contenuHtml)
   const body = `
-${buildCabinetLetterheadHtml(docTitle)}
-<p class="print-meta"><strong>Dossier :</strong> ${escapeHtml(options.dossierMeta)}<br>
-<strong>Document :</strong> ${escapeHtml(options.title)}</p>
-<div class="print-content">${options.contenuHtml}</div>
+${buildCabinetLetterheadHtml('PIÈCE JURIDIQUE')}
+<div class="print-content">${contenuHtml}</div>
 ${buildCabinetFooterHtml()}`
 
   return buildPrintPageHtml({

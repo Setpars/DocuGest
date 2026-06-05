@@ -1,0 +1,115 @@
+rules_version = '2';
+/**
+ * Règles Firestore — DocuGest / EMK&C
+ *
+ * Modèle client → dossiers : relation 1:N via le champ `clientId` sur chaque document
+ * de la collection `dossiers` (collection racine, pas de sous-collection).
+ *
+ * Note d’honoraires : une seule par dossier (`noteHonoraireId` sur le dossier).
+ * Création autorisée uniquement si `montantHonorairesTotal` > 0.
+ *
+ * Index recommandés (console Firebase) :
+ *   Collection `dossiers` — champ `clientId` (Ascending)
+ *   Collection `dossier_documents` — `dossierId` + `type` (Ascending)
+ *   Collection `affectations` — `dossierId` (Ascending)
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/utilisateurs/$(request.auth.uid));
+    }
+
+    function isDoyen() {
+      return isSignedIn()
+        && userDoc().data.role == 'doyen'
+        && userDoc().data.actif == true;
+    }
+
+    function isActiveUser() {
+      return isSignedIn() && userDoc().data.actif == true;
+    }
+
+    function dossierData(dossierId) {
+      return get(/databases/$(database)/documents/dossiers/$(dossierId)).data;
+    }
+
+    function dossierHasHonoraires(dossierId) {
+      return dossierData(dossierId).montantHonorairesTotal is number
+        && dossierData(dossierId).montantHonorairesTotal > 0;
+    }
+
+    function dossierHasNoNoteHonoraire(dossierId) {
+      return !('noteHonoraireId' in dossierData(dossierId))
+        || dossierData(dossierId).noteHonoraireId == null
+        || dossierData(dossierId).noteHonoraireId == '';
+    }
+
+    function isPieceJuridiqueCreate() {
+      return request.resource.data.type == 'piece_juridique';
+    }
+
+    function isNoteHonoraireCreate() {
+      return request.resource.data.type == 'note_honoraire'
+        && request.resource.data.dossierId is string
+        && request.resource.data.dossierId.size() > 0
+        && dossierHasHonoraires(request.resource.data.dossierId)
+        && dossierHasNoNoteHonoraire(request.resource.data.dossierId);
+    }
+
+    match /utilisateurs/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isDoyen());
+      allow write: if isDoyen();
+    }
+
+    match /login_directory/{emailId} {
+      allow read: if true;
+      allow write: if isDoyen();
+    }
+
+    match /clients/{clientId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /dossiers/{dossierId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /paiements/{paiementId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /agenda/{agendaId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /avocats/{avocatId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /affectations/{affectationId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /dossier_documents/{docId} {
+      allow read: if isActiveUser();
+      allow create: if isActiveUser() && (isPieceJuridiqueCreate() || isNoteHonoraireCreate());
+      allow update: if isActiveUser()
+        && resource.data.type == request.resource.data.type
+        && resource.data.dossierId == request.resource.data.dossierId;
+      allow delete: if isActiveUser();
+    }
+
+    match /piece_modeles/{modeleId} {
+      allow read, write: if isActiveUser();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isDoyen();
+      allow create: if isActiveUser();
+    }
+  }
+}

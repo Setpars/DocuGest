@@ -6,6 +6,7 @@ export type ClientFormData = {
   nationalite: string
   adresse: string
   numTel: string
+  email: string
 }
 
 /** Fiche client persistée dans Firestore (`clients`). */
@@ -16,6 +17,7 @@ export type ClientRecord = {
   nationalite: string
   adresse: string
   numTel: string
+  email?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -50,6 +52,7 @@ export function emptyClientForm(): ClientFormData {
     nationalite: '',
     adresse: '',
     numTel: '',
+    email: '',
   }
 }
 
@@ -61,6 +64,7 @@ export function clientFormFromRecord(record: ClientRecord): ClientFormData {
     adresse: record.adresse,
     nationalite: record.nationalite,
     numTel: record.numTel,
+    email: record.email ?? '',
   }
 }
 
@@ -71,6 +75,7 @@ export function clientFormFromDossierFields(data: {
   clientNationalite?: string
   clientAdresse?: string
   clientTelephone?: string
+  clientEmail?: string
 }): ClientFormData {
   return {
     clientId: data.clientId ?? null,
@@ -79,5 +84,6 @@ export function clientFormFromDossierFields(data: {
     nationalite: String(data.clientNationalite ?? ''),
     adresse: String(data.clientAdresse ?? ''),
     numTel: String(data.clientTelephone ?? ''),
+    email: String(data.clientEmail ?? ''),
   }
 }

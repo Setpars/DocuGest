@@ -13,8 +13,13 @@ import ClientFormFields from '@/components/ClientFormFields/index.vue'
 import DynamicSelect from '@/components/DynamicSelect/index.vue'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import { collectUniqueStrings } from '@/utils/collect-field-suggestions'
+import { usePaiementsRealtime } from '@/composables/usePaiementsRealtime'
+import { DOSSIER_MESSAGES } from '@/constants/dossier-messages'
 import { PERMISSIONS } from '@/constants/permissions'
 import { DEVISE_OPTIONS, formatMoney, type Devise } from '@/utils/currency'
+import { getDossierPaiementSummary, hasDossierFinancialData } from '@/utils/dossier-paiement'
+import { hasDossierActiveAssignment } from '@/utils/dossier-suivi'
+import { formatDateFr } from '@/utils/date'
 import {
   clientFormFromDossierFields,
   clientFormFromRecord,
@@ -66,10 +71,21 @@ const route = useRoute()
 const router = useRouter()
 const clientsStore = useDomainClientsStore()
 const { auth: hasAuth } = useAppAuth()
+const canManageDossiers = computed(() => hasAuth(PERMISSIONS.dossiers))
 const canManagePaiements = computed(() => hasAuth(PERMISSIONS.paiements))
-const shouldOpenFromClientQuery = ref(
-  typeof route.query.clientId === 'string' && route.query.clientId.length > 0,
+const canViewFinances = computed(() =>
+  hasAuth(PERMISSIONS.paiements)
+  || hasAuth(PERMISSIONS.dossiers)
+  || hasAuth(PERMISSIONS.dossiersConsultation),
 )
+const canNoteHonoraire = computed(() => hasAuth(PERMISSIONS.noteHonoraire))
+const canViewClients = computed(() => hasAuth(PERMISSIONS.clients))
+const isConsultationOnly = computed(() => !canManageDossiers.value && hasAuth(PERMISSIONS.dossiersConsultation))
+
+const {
+  paiements: allPaiements,
+  start: startPaiementsRealtime,
+} = usePaiementsRealtime(db)
 const dossiers = computed(() =>
   clientsStore.dossiersRaw.map((item) => mapDossierDocFromRaw(item)),
 )
@@ -107,6 +123,14 @@ const form = ref({
 })
 
 const clientForm = ref<ClientFormData>(emptyClientForm())
+
+const linkedClientDossiersCount = computed(() => {
+  const id = clientForm.value.clientId?.trim()
+  if (!id || id.startsWith('dossier:')) return 0
+  const client = clientsStore.registry.find((item) => item.id === id)
+  if (!client) return 0
+  return clientsStore.getClientDossiersCount(client)
+})
 
 const sortKey = ref<keyof Dossier>('date_ouverture')
 const sortOrder = ref<'asc' | 'desc'>('desc')
@@ -149,17 +173,35 @@ function getDossierAvocats(dossier: Dossier): DossierAvocatSummary[] {
 }
 
 function isDossierAssigne(dossier: Dossier): boolean {
-  return getDossierAvocats(dossier).length > 0
+  return hasDossierActiveAssignment(dossier.id, affectations.value, dossier.avocatId)
 }
 
 function updateOnlineStatus() {
   isOnline.value = typeof navigator !== 'undefined' ? navigator.onLine : true
 }
 
-async function initPage() {
-  await clientsStore.loadRegistry()
-  if (shouldOpenFromClientQuery.value) {
-    shouldOpenFromClientQuery.value = false
+function clearDossierDeepLinkQuery() {
+  const hasClientId = typeof route.query.clientId === 'string' && route.query.clientId.length > 0
+  const hasOpen = route.query.open === 'add'
+  const hasDossierId = typeof route.query.dossierId === 'string' && route.query.dossierId.length > 0
+  if (!hasClientId && !hasOpen && !hasDossierId) return
+  const nextQuery = { ...route.query }
+  delete nextQuery.clientId
+  delete nextQuery.open
+  delete nextQuery.dossierId
+  router.replace({ query: nextQuery })
+}
+
+async function applyRouteQueryActions() {
+  const dossierId = typeof route.query.dossierId === 'string' ? route.query.dossierId : ''
+  if (dossierId && !showDetail.value) {
+    openDossierFromQuery()
+    return
+  }
+
+  const shouldOpenAdd = route.query.open === 'add'
+  const queryClientId = typeof route.query.clientId === 'string' ? route.query.clientId : ''
+  if ((shouldOpenAdd || queryClientId) && canManageDossiers.value && !showForm.value) {
     await openAdd()
   }
 }
@@ -168,7 +210,13 @@ function openDossierFromQuery() {
   const dossierId = typeof route.query.dossierId === 'string' ? route.query.dossierId : ''
   if (!dossierId) return
   const dossier = dossiers.value.find((item) => item.id === dossierId)
-  if (dossier) view(dossier)
+  if (dossier) {
+    view(dossier)
+    return
+  }
+  if (clientsStore.loaded && !clientsStore.loading) {
+    router.push({ name: 'dossierFiche', params: { dossierId } })
+  }
 }
 
 watch(dossiers, (list) => {
@@ -177,12 +225,48 @@ watch(dossiers, (list) => {
   if (updated) selected.value = updated
 })
 
+const selectedPaiements = computed(() => {
+  if (!selected.value) return []
+  return allPaiements.value
+    .filter((p) => p.dossierId === selected.value!.id)
+    .sort((a, b) => String(b.date_paiement).localeCompare(String(a.date_paiement)))
+})
+
+const selectedPaiementSummary = computed(() => {
+  if (!selected.value) return null
+  const ref = {
+    id: selected.value.id,
+    motif: selected.value.motif,
+    clientNom: selected.value.clientNom,
+    juridiction: selected.value.juridiction,
+    montantHonorairesTotal: selected.value.montantHonorairesTotal,
+    deviseHonoraires: selected.value.deviseHonoraires,
+  }
+  return getDossierPaiementSummary(ref, selectedPaiements.value)
+})
+
+const hasSelectedFinancialInfo = computed(() => {
+  if (!selected.value) return false
+  return hasDossierFinancialData(
+    selected.value.montantHonorairesTotal,
+    selectedPaiements.value.length,
+  )
+})
+
 onMounted(() => {
-  initPage().then(() => openDossierFromQuery())
+  if (canViewFinances.value) startPaiementsRealtime()
+  void clientsStore.loadRegistry().then(() => applyRouteQueryActions())
   updateOnlineStatus()
   window.addEventListener('online', updateOnlineStatus)
   window.addEventListener('offline', updateOnlineStatus)
 })
+
+watch(
+  () => [route.query.clientId, route.query.open, route.query.dossierId] as const,
+  () => {
+    void applyRouteQueryActions()
+  },
+)
 
 onBeforeUnmount(() => {
   window.removeEventListener('online', updateOnlineStatus)
@@ -261,12 +345,6 @@ const {
   juridictionOptions,
 )
 
-function clearClientIdQuery() {
-  if (!route.query.clientId) return
-  const nextQuery = { ...route.query }
-  delete nextQuery.clientId
-  router.replace({ query: nextQuery })
-}
 
 function resetForm() {
   form.value = {
@@ -332,8 +410,7 @@ function view(dossier: Dossier) {
 
 function closeForm() {
   showForm.value = false
-  shouldOpenFromClientQuery.value = false
-  clearClientIdQuery()
+  clearDossierDeepLinkQuery()
 }
 
 function closeDetail() {
@@ -395,7 +472,10 @@ async function save() {
       await updateDoc(doc(db, 'dossiers', form.value.id), payload)
       showToast('success', 'Dossier modifié avec succès')
     } else {
-      await addDoc(dossiersCol, payload)
+      await addDoc(dossiersCol, {
+        ...payload,
+        createdAt: new Date().toISOString(),
+      })
       showToast('success', 'Dossier créé avec succès')
     }
 
@@ -405,7 +485,8 @@ async function save() {
     if (code.includes('unavailable') || code.includes('failed-precondition')) {
       showToast('error', 'Service indisponible. Réessayez dans quelques instants.')
     } else {
-      showToast('error', 'Erreur lors de l’enregistrement')
+      const message = error instanceof Error ? error.message : 'Erreur lors de l’enregistrement'
+      showToast('error', message)
     }
   } finally {
     saving.value = false
@@ -517,6 +598,12 @@ function editFromDetail() {
   closeDetail()
   edit(dossier)
 }
+
+function noteHonoraireQueryForDossier(dossier: Dossier) {
+  const query: Record<string, string> = { dossierId: dossier.id }
+  if (dossier.noteHonoraireId) query.documentId = dossier.noteHonoraireId
+  return query
+}
 </script>
 
 <template>
@@ -538,9 +625,15 @@ function editFromDetail() {
     <div class="mx-auto max-w-[1600px] p-4 sm:p-6">
       <div class="mb-6 flex flex-col gap-4 rounded-2xl bg-white px-6 py-5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 class="text-2xl font-semibold">Gestion des dossiers</h1>
+          <h1 class="text-2xl font-semibold">
+            {{ isConsultationOnly ? 'Consultation des dossiers' : 'Gestion des dossiers' }}
+          </h1>
           <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Créez et suivez les affaires. Un dossier n’est pris en charge que lorsqu’un avocat lui est assigné.
+            {{
+              isConsultationOnly
+                ? 'Consultez la liste des affaires et accédez aux détails et à la situation financière.'
+                : 'Créez et suivez les affaires. Un dossier n’est pris en charge que lorsqu’un avocat lui est assigné.'
+            }}
           </p>
           <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
             <span class="font-medium">{{ totals.assignes }}</span> assigné(s)
@@ -548,7 +641,7 @@ function editFromDetail() {
           </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-3">
+        <div v-if="canManageDossiers" class="flex flex-wrap items-center gap-3">
           <button
             type="button"
             class="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white"
@@ -647,7 +740,11 @@ function editFromDetail() {
 
           <div v-else-if="paginated.length === 0" class="rounded-2xl bg-white p-12 text-center shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
             <p class="text-slate-500">Aucun dossier ne correspond à vos critères.</p>
-            <button class="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white" @click="openAdd">
+            <button
+              v-if="canManageDossiers"
+              class="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white"
+              @click="openAdd"
+            >
               Créer un dossier
             </button>
           </div>
@@ -668,6 +765,7 @@ function editFromDetail() {
                       {{ dossier.statut }}
                     </span>
                     <span
+                      v-if="dossier.statut !== 'Clos'"
                       class="rounded-full px-2.5 py-0.5 text-xs font-medium"
                       :class="isDossierAssigne(dossier)
                         ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
@@ -684,7 +782,7 @@ function editFromDetail() {
                   <p class="text-sm text-slate-600 dark:text-slate-300">
                     <span class="text-slate-500">Client :</span>
                     <RouterLink
-                      v-if="dossier.clientId"
+                      v-if="dossier.clientId && canViewClients"
                       :to="{ name: 'clientDetail', params: { clientId: dossier.clientId } }"
                       class="text-primary font-medium hover:underline"
                       @click.stop
@@ -709,10 +807,18 @@ function editFromDetail() {
                   <button class="rounded-lg bg-slate-200 px-2.5 py-1.5 text-xs font-medium dark:bg-slate-700" @click="view(dossier)">
                     Détail
                   </button>
-                  <button class="rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40" @click="edit(dossier)">
+                  <button
+                    v-if="canManageDossiers"
+                    class="rounded-lg bg-blue-100 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40"
+                    @click="edit(dossier)"
+                  >
                     Modifier
                   </button>
-                  <button class="rounded-lg bg-rose-100 px-2.5 py-1.5 text-xs font-medium text-rose-700 dark:bg-rose-900/40" @click="remove(dossier.id)">
+                  <button
+                    v-if="canManageDossiers"
+                    class="rounded-lg bg-rose-100 px-2.5 py-1.5 text-xs font-medium text-rose-700 dark:bg-rose-900/40"
+                    @click="remove(dossier.id)"
+                  >
                     Supprimer
                   </button>
                 </div>
@@ -851,7 +957,7 @@ function editFromDetail() {
                       Informations client
                     </div>
                     <RouterLink
-                      v-if="selected?.clientId"
+                      v-if="selected?.clientId && canViewClients"
                       :to="{ name: 'clientDetail', params: { clientId: selected.clientId } }"
                       class="text-primary text-xs font-medium hover:underline"
                       @click="closeDetail"
@@ -886,7 +992,74 @@ function editFromDetail() {
                     <div class="mt-1 font-medium">{{ selected?.clientTelephone || '—' }}</div>
                   </div>
 
-                  <div class="rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-900/20">
+                  <div
+                    v-if="canViewFinances && selected && !hasSelectedFinancialInfo"
+                    class="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+                  >
+                    <p class="font-medium">
+                      Aucune information financière disponible pour ce dossier.
+                    </p>
+                    <p class="mt-1 text-xs text-amber-800/90 dark:text-amber-200/90">
+                      Aucun montant d’honoraires ni paiement enregistré pour l’instant.
+                    </p>
+                  </div>
+
+                  <div
+                    v-else-if="canViewFinances && selectedPaiementSummary && hasSelectedFinancialInfo"
+                    class="rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-900/20"
+                  >
+                    <div class="mb-3 text-sm font-semibold text-violet-900 dark:text-violet-200">
+                      Situation financière
+                    </div>
+                    <dl class="grid gap-2 text-sm">
+                      <div class="flex justify-between gap-2">
+                        <dt class="text-slate-500">Montant dû</dt>
+                        <dd class="font-medium">
+                          {{ formatMoney(selectedPaiementSummary.montantDu, selectedPaiementSummary.devise) }}
+                        </dd>
+                      </div>
+                      <div class="flex justify-between gap-2">
+                        <dt class="text-slate-500">Total versé</dt>
+                        <dd class="font-medium text-emerald-700 dark:text-emerald-300">
+                          {{ formatMoney(selectedPaiementSummary.montantVerse, selectedPaiementSummary.devise) }}
+                        </dd>
+                      </div>
+                      <div class="flex justify-between gap-2 border-t border-violet-200 pt-2 dark:border-violet-800">
+                        <dt class="text-slate-500">Solde restant</dt>
+                        <dd class="font-semibold text-amber-800 dark:text-amber-200">
+                          {{ formatMoney(selectedPaiementSummary.reste, selectedPaiementSummary.devise) }}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div v-if="selectedPaiements.length" class="mt-4">
+                      <p class="mb-2 text-xs font-semibold uppercase text-slate-500">
+                        Historique des paiements
+                      </p>
+                      <ul class="max-h-40 space-y-2 overflow-y-auto text-xs">
+                        <li
+                          v-for="p in selectedPaiements"
+                          :key="p.id"
+                          class="rounded-lg border border-violet-100 bg-white/80 px-3 py-2 dark:border-violet-900 dark:bg-slate-900/50"
+                        >
+                          <div class="flex justify-between gap-2 font-medium">
+                            <span>{{ formatDateFr(p.date_paiement) }}</span>
+                            <span>{{ formatMoney(p.montant_payer, p.devise) }}</span>
+                          </div>
+                          <p class="mt-0.5 text-slate-500">
+                            {{ p.type_paiement }} · {{ p.description || 'Sans référence' }}
+                          </p>
+                        </li>
+                      </ul>
+                    </div>
+                    <p v-else class="mt-3 text-xs text-slate-500">
+                      Aucun paiement enregistré.
+                    </p>
+                  </div>
+
+                  <div
+                    v-else
+                    class="rounded-xl border border-violet-200 bg-violet-50/50 p-4 dark:border-violet-900 dark:bg-violet-900/20"
+                  >
                     <div class="text-xs text-slate-500">Honoraires — montant total à payer</div>
                     <div class="mt-1 font-semibold text-violet-900 dark:text-violet-200">
                       <template v-if="selected && selected.montantHonorairesTotal > 0">
@@ -894,13 +1067,17 @@ function editFromDetail() {
                       </template>
                       <span v-else class="font-normal text-amber-700 dark:text-amber-300">Non défini — à renseigner dans Modifier</span>
                     </div>
-                    <p class="mt-2 text-xs text-slate-500">
-                      Les versements et la note d’honoraires s’appuient sur ce montant.
-                    </p>
                   </div>
 
-                  <p v-if="!selectedAvocats.length" class="rounded-xl bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-                    Ce dossier n’a pas encore d’avocat assigné. Rendez-vous dans la page Avocats pour créer une affectation.
+                  <p
+                    v-if="selected && selected.statut !== 'Clos' && !isDossierAssigne(selected)"
+                    class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+                  >
+                    {{
+                      !hasSelectedFinancialInfo
+                        ? DOSSIER_MESSAGES.unassignedNoDocuments
+                        : DOSSIER_MESSAGES.unassigned
+                    }}
                   </p>
                 </div>
               </div>
@@ -913,26 +1090,34 @@ function editFromDetail() {
                 class="w-full rounded-xl bg-violet-600 px-4 py-2.5 text-center text-sm font-medium text-white sm:w-auto hover:bg-violet-700"
                 @click="closeDetail"
               >
-                Fiche de suivi complète
+                {{ canViewFinances && isConsultationOnly ? 'Voir la situation financière' : 'Fiche de suivi complète' }}
               </RouterLink>
               <RouterLink
-                v-if="selected && canManagePaiements && isDossierAssigne(selected)"
+                v-if="selected && canManagePaiements"
                 :to="{ name: 'paiement', query: { dossierId: selected.id, open: 'add' } }"
                 class="w-full rounded-xl bg-violet-100 px-4 py-2.5 text-center text-sm font-medium text-violet-800 sm:w-auto dark:bg-violet-900/40 dark:text-violet-200"
                 @click="closeDetail"
               >
-                Gérer les paiements
+                Enregistrer un paiement
               </RouterLink>
               <RouterLink
-                v-if="selected"
+                v-if="selected && canNoteHonoraire && !selected.noteHonoraireId"
                 :to="{ name: 'noteHonoraire', query: { dossierId: selected.id } }"
                 class="w-full rounded-xl bg-emerald-100 px-4 py-2.5 text-center text-sm font-medium text-emerald-800 sm:w-auto dark:bg-emerald-900/40 dark:text-emerald-200"
                 @click="closeDetail"
               >
                 Établir note honoraire
               </RouterLink>
+              <RouterLink
+                v-else-if="selected && canNoteHonoraire && selected.noteHonoraireId"
+                :to="{ name: 'noteHonoraire', query: noteHonoraireQueryForDossier(selected) }"
+                class="w-full rounded-xl bg-emerald-100 px-4 py-2.5 text-center text-sm font-medium text-emerald-800 sm:w-auto dark:bg-emerald-900/40 dark:text-emerald-200"
+                @click="closeDetail"
+              >
+                Ouvrir la note honoraire
+              </RouterLink>
               <button
-                v-if="selected"
+                v-if="selected && canManageDossiers"
                 type="button"
                 class="w-full rounded-xl bg-blue-100 px-4 py-2.5 text-sm font-medium text-blue-700 sm:w-auto dark:bg-blue-900/40"
                 @click="editFromDetail"
@@ -972,12 +1157,25 @@ function editFromDetail() {
                     <div>
                       <h3 class="text-sm font-semibold">Client</h3>
                       <p class="text-xs text-slate-500">
-                        Le client n’est géré que via le dossier : création, mise à jour et détection des doublons à l’enregistrement.
+                        Détection automatique par nom, téléphone ou e-mail. Un client existant est lié sans recréer sa fiche.
                       </p>
                     </div>
                   </header>
+                  <p
+                    v-if="!isEdit && clientForm.clientId && linkedClientDossiersCount > 0"
+                    class="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+                  >
+                    Ce client possède déjà
+                    <strong>{{ linkedClientDossiersCount }}</strong>
+                    dossier{{ linkedClientDossiersCount > 1 ? 's' : '' }}.
+                    L’enregistrement ajoutera un <strong>nouveau dossier</strong> sans modifier les existants.
+                  </p>
                   <ClientFormFields
                     v-model="clientForm"
+                    :edit-existing="isEdit"
+                    :hint="isEdit
+                      ? 'La fiche client centrale n’est pas modifiée depuis le dossier. Modifiez le client depuis sa fiche dédiée.'
+                      : undefined"
                     :input-class="inputClass"
                   />
                 </section>

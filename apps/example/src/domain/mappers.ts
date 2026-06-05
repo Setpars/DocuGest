@@ -53,6 +53,7 @@ export function mapClientEntityFromFirestore(id: string, data: Record<string, un
     nationalite: str(data, 'nationalite', 'nationalité'),
     adresse: str(data, 'adresse'),
     numTel: str(data, 'numTel', 'num_tel', 'telephone', 'clientTelephone'),
+    email: str(data, 'email', 'courriel'),
   }
 }
 
@@ -62,6 +63,7 @@ export type ClientFirestorePayload = {
   nationalite: string
   adresse: string
   numTel: string
+  email: string
   updatedAt?: string
   createdAt?: string
 }
@@ -72,15 +74,18 @@ export function clientToFirestore(form: {
   nationalite: string
   adresse: string
   numTel: string
+  email?: string
   updatedAt?: string
   createdAt?: string
 }): ClientFirestorePayload {
+  const email = String(form.email ?? '').trim().toLowerCase()
   return {
     nom: form.nom.trim(),
     genre: form.genre.trim() || 'Non précisé',
     nationalite: form.nationalite.trim() || 'Non précisée',
     adresse: form.adresse.trim() || 'Non précisée',
     numTel: form.numTel.trim() || 'Non précisé',
+    email,
     ...(form.updatedAt ? { updatedAt: form.updatedAt } : {}),
     ...(form.createdAt ? { createdAt: form.createdAt } : {}),
   }

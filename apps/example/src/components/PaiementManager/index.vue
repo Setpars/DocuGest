@@ -7,7 +7,7 @@ import {
   updateDoc,
 } from 'firebase/firestore'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { usePaiementsRealtime } from '@/composables/usePaiementsRealtime'
 import { db } from '@/firebase'
 import {
@@ -41,7 +41,12 @@ import {
   natureToFormFields,
   parseNaturePaiement,
 } from '@/utils/paiement-nature'
-import { collectDossiersSuivisIds, isDossierSuivi } from '@/utils/dossier-suivi'
+import {
+  collectDossiersSuivisIds,
+  isDossierStatutActif,
+  isDossierSuivi,
+} from '@/utils/dossier-suivi'
+import { PERMISSIONS } from '@/constants/permissions'
 import { BTN_DISABLED } from '@/utils/action-button'
 import { writeAuditLog } from '@/utils/audit-log'
 
@@ -60,6 +65,16 @@ const props = withDefaults(
 )
 
 const route = useRoute()
+const { auth: hasAuth } = useAppAuth()
+
+/** Rôle finances : gestion des paiements sans édition des dossiers. */
+const isFinanceRole = computed(() =>
+  hasAuth(PERMISSIONS.paiements) && !hasAuth(PERMISSIONS.dossiers),
+)
+
+const canViewDossierFiche = computed(() =>
+  hasAuth(PERMISSIONS.dossiers) || hasAuth(PERMISSIONS.dossiersConsultation),
+)
 
 const STATUT_META: Record<PaiementStatut, { label: string, badgeClass: string }> = {
   paye: {
@@ -135,9 +150,22 @@ const formIsNatureAutre = computed(() => isFormNatureAutre(form.value.nature_sel
 
 const natureFilterOptions = computed(() => collectNatureFilterOptions(paiements.value))
 
-const dossiersPourFormulaire = computed(() =>
-  formIsHonoraires.value ? dossiersSuivis.value : allDossiers.value,
+const dossiersActifs = computed(() =>
+  allDossiers.value.filter((item) => isDossierStatutActif(item.statut)),
 )
+
+const dossiersPourFormulaire = computed(() => {
+  if (isFinanceRole.value) {
+    if (formIsHonoraires.value) {
+      const suivisActifs = dossiersSuivis.value.filter((item) => isDossierStatutActif(item.statut))
+      if (suivisActifs.length > 0) return suivisActifs
+      if (dossiersActifs.value.length > 0) return dossiersActifs.value
+      return dossiersSuivis.value
+    }
+    return dossiersActifs.value.length > 0 ? dossiersActifs.value : allDossiers.value
+  }
+  return formIsHonoraires.value ? dossiersSuivis.value : allDossiers.value
+})
 
 function showToast(type: 'success' | 'error', message: string) {
   toast.value = { show: true, type, message }
@@ -163,9 +191,14 @@ const dossiersSuivis = computed(() =>
   allDossiers.value.filter((item) => dossiersSuivisIds.value.has(item.id)),
 )
 
-/** Filtre : dossiers suivis + dossiers déjà liés à un paiement (historique). */
+/** Filtre liste : dossiers éligibles + historique des paiements. */
 const dossiersPourFiltre = computed(() => {
-  const ids = new Set(dossiersSuivisIds.value)
+  const ids = new Set<string>()
+  if (isFinanceRole.value) {
+    for (const dossier of dossiersActifs.value) ids.add(dossier.id)
+  } else {
+    for (const id of dossiersSuivisIds.value) ids.add(id)
+  }
   for (const paiement of paiements.value) {
     if (paiement.dossierId) ids.add(paiement.dossierId)
   }
@@ -192,13 +225,17 @@ function resolveDossierIdFromRoute() {
     || (typeof route.query.dossierId === 'string' ? route.query.dossierId : '')
 }
 
-onMounted(() => {
-  startRealtime()
+function syncRouteQueryToUi() {
   const dossierId = resolveDossierIdFromRoute()
   if (dossierId) filterDossierId.value = dossierId
-  if (dossierId && route.query.open === 'add') {
+  if (dossierId && route.query.open === 'add' && !showForm.value) {
     openAdd(dossierId)
   }
+}
+
+onMounted(() => {
+  startRealtime()
+  syncRouteQueryToUi()
 })
 
 watch(syncError, (message) => {
@@ -213,11 +250,9 @@ watch(paiements, () => {
 })
 
 watch(
-  () => route.query.dossierId,
-  (queryId) => {
-    if (typeof queryId === 'string' && queryId) {
-      filterDossierId.value = queryId
-    }
+  () => [route.query.dossierId, route.query.open] as const,
+  () => {
+    syncRouteQueryToUi()
   },
 )
 
@@ -706,10 +741,21 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
       </header>
 
       <section v-if="allDossiers.length === 0 && !loading" class="mb-6 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-        Aucun dossier disponible. Créez d’abord un dossier avant d’enregistrer un paiement.
+        Aucun dossier enregistré dans le cabinet. Créez d’abord un dossier avant d’enregistrer un paiement.
       </section>
-      <section v-else-if="dossiersSuivis.length === 0 && !loading" class="mb-6 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-        Aucun dossier suivi par un avocat — les honoraires nécessitent une affectation (menu Avocats). Consultation et visite restent possibles sur tout dossier.
+      <section
+        v-else-if="!isFinanceRole && dossiersSuivis.length === 0 && !loading"
+        class="mb-6 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"
+      >
+        Aucun dossier n’a de responsable assigné pour l’instant. Les dossiers existants restent consultables dans
+        <RouterLink :to="{ name: 'dossiers' }" class="font-medium underline">Gestion des dossiers</RouterLink>.
+        Les paiements d’honoraires nécessitent une affectation (menu Avocats).
+      </section>
+      <section
+        v-else-if="isFinanceRole && dossiersActifs.length === 0 && !loading"
+        class="mb-6 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"
+      >
+        Aucun dossier ouvert ou en cours pour le moment.
       </section>
 
       <section class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1114,8 +1160,17 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
                       {{ dossier.motif }} — {{ dossier.clientNom || 'Sans client' }}
                     </option>
                   </select>
-                  <p v-if="formIsHonoraires && dossiersSuivis.length === 0" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                    Aucun dossier avec avocat assigné pour les honoraires.
+                  <p
+                    v-if="formIsHonoraires && dossiersSuivis.length === 0 && !isFinanceRole"
+                    class="mt-2 text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    Aucun dossier avec responsable assigné. Le dossier existe peut-être déjà sans affectation — consultez la liste des dossiers.
+                  </p>
+                  <p
+                    v-else-if="formIsHonoraires && isFinanceRole && dossiersSuivis.length === 0"
+                    class="mt-2 text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    Honoraires : un responsable doit être affecté au dossier. Les autres natures de paiement restent disponibles sur les dossiers actifs.
                   </p>
                 </div>
 
@@ -1290,6 +1345,14 @@ const canDetailAddPayment = computed(() => !detailAddPaymentBlockedReason.value)
             </div>
 
             <div class="shrink-0 flex flex-col gap-2 border-t border-slate-200 px-4 py-4 sm:flex-row sm:flex-wrap sm:justify-end sm:px-6 dark:border-slate-700">
+              <RouterLink
+                v-if="selected?.dossierId && canViewDossierFiche"
+                :to="{ name: 'dossierFiche', params: { dossierId: selected.dossierId } }"
+                class="w-full rounded-xl bg-violet-100 px-4 py-2.5 text-center text-sm font-medium text-violet-800 sm:w-auto dark:bg-violet-900/40 dark:text-violet-200"
+                @click="closeDetail"
+              >
+                {{ isFinanceRole ? 'Situation financière du dossier' : 'Fiche de suivi' }}
+              </RouterLink>
               <AppButtonGuard :blocked="!canDetailAddPayment" :reason="detailAddPaymentBlockedReason">
                 <button
                   type="button"

@@ -8,6 +8,7 @@ import {
   type ClientFormData,
   type ClientWithDossiers,
 } from '@/types/client'
+import { PERMISSIONS } from '@/constants/permissions'
 import { writeAuditLog } from '@/utils/audit-log'
 import { formatDateFr } from '@/utils/date'
 import { formatAvocatsLabel } from '@/utils/affectation'
@@ -19,6 +20,11 @@ defineOptions({
 
 const route = useRoute()
 const clientsStore = useDomainClientsStore()
+const { auth: hasAuth } = useAppAuth()
+
+const canViewActiveDossiers = computed(() =>
+  hasAuth(PERMISSIONS.dossiers) || hasAuth(PERMISSIONS.dossiersConsultation),
+)
 
 const loading = ref(true)
 const error = ref('')
@@ -33,6 +39,7 @@ const clientForm = ref<ClientFormData>({
   nationalite: '',
   adresse: '',
   numTel: '',
+  email: '',
 })
 
 const clientId = computed(() => String(route.params.clientId ?? ''))
@@ -292,6 +299,14 @@ onMounted(() => {
             </div>
             <div>
               <dt class="text-muted-foreground text-xs uppercase">
+                E-mail
+              </dt>
+              <dd class="mt-0.5 font-medium">
+                {{ client.email || '—' }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground text-xs uppercase">
                 Total dossiers
               </dt>
               <dd class="mt-0.5 text-2xl font-semibold text-primary">
@@ -318,6 +333,7 @@ onMounted(() => {
             dossier{{ openDossiers.length > 1 ? 's' : '' }} ouvert(s) ou en cours
           </p>
           <RouterLink
+            v-if="canViewActiveDossiers"
             :to="{ name: 'enCours' }"
             class="rounded-xl bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
           >
@@ -326,13 +342,22 @@ onMounted(() => {
         </section>
 
         <section class="rounded-2xl bg-card ring-1 ring-border">
-          <div class="border-b border-border px-6 py-4">
-            <h3 class="font-semibold">
-              Tous les dossiers du client
-            </h3>
-            <p class="text-muted-foreground mt-1 text-sm">
-              Cliquez sur un dossier pour l’ouvrir dans la gestion des dossiers.
-            </p>
+          <div class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 py-4">
+            <div>
+              <h3 class="font-semibold">
+                Tous les dossiers du client ({{ client.dossiersCount }})
+              </h3>
+              <p class="text-muted-foreground mt-1 text-sm">
+                Un client peut avoir plusieurs dossiers. Chaque dossier reste indépendant.
+              </p>
+            </div>
+            <RouterLink
+              v-if="canEditClient"
+              :to="{ name: 'dossiers', query: { clientId: clientId, open: 'add' } }"
+              class="shrink-0 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              + Nouveau dossier
+            </RouterLink>
           </div>
 
           <div v-if="client.dossiers.length === 0" class="p-8 text-center text-muted-foreground text-sm">

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -10,11 +9,16 @@ import {
   where,
 } from 'firebase/firestore'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { db } from '@/firebase'
-import { cloturerDossierApresNoteHonoraire } from '@/services/note-honoraire-cloture'
+import { NOTE_HONORAIRE_MESSAGES } from '@/constants/note-honoraire'
+import { createNoteHonoraireWithCloture } from '@/services/note-honoraire'
+import {
+  dossierCanCreateNoteHonoraire,
+  dossierHasHonorairesMontant,
+} from '@/utils/note-honoraire-guards'
 import type { DossierDocument, DossierDocumentForm } from '@/types/dossier-document'
-import { normalizeDevise } from '@/utils/currency'
+import { DEVISE_OPTIONS, normalizeDevise, type Devise } from '@/utils/currency'
 import { BTN_DISABLED } from '@/utils/action-button'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import {
@@ -27,6 +31,7 @@ import {
   parseDossierResultat,
   type DossierResultatIssue,
 } from '@/utils/dossier-resultat'
+import { normalizeNoteHonoraireHtml } from '@/utils/document-html-normalize'
 import { printEditorDocument } from '@/utils/print-document'
 
 defineOptions({
@@ -58,6 +63,7 @@ type DossierRef = {
   resumeAffaire: string
   montantHonorairesTotal: number
   deviseHonoraires: string
+  noteHonoraireId: string
   statut: string
   dateFermeture: string | null
   resultat: string
@@ -75,7 +81,13 @@ const dossiers = ref<DossierRef[]>([])
 const documents = ref<DossierDocument[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const savingHonoraires = ref(false)
 const editorRef = ref<HTMLElement | null>(null)
+
+const honorairesForm = ref({
+  montant: '',
+  devise: 'CDF' as Devise,
+})
 
 const toast = ref({
   show: false,
@@ -123,6 +135,7 @@ function mapDossier(currentDoc: { id: string, data: () => Record<string, unknown
     resumeAffaire: String(data.resume_affaire ?? data.description ?? ''),
     montantHonorairesTotal: Number(data.montantHonorairesTotal ?? 0),
     deviseHonoraires: normalizeDevise(data.deviseHonoraires),
+    noteHonoraireId: String(data.noteHonoraireId ?? ''),
     statut: String(data.statut ?? 'Ouvert'),
     dateFermeture: data.date_fermeture ? String(data.date_fermeture) : null,
     resultat: String(data.resultat ?? ''),
@@ -216,25 +229,65 @@ function resolveDestinataireForDossier(dossier: DossierRef) {
   })
 }
 
+function resolveLinkedDossierId() {
+  return props.initialDossierId
+    || (typeof route.query.dossierId === 'string' ? route.query.dossierId : '')
+}
+
+function getDossierById(dossierId: string) {
+  return dossiers.value.find((item) => item.id === dossierId)
+}
+
+function dossierNeedsHonorairesSetup(dossierId: string) {
+  if (!dossierId || form.value.id) return false
+  const dossier = getDossierById(dossierId)
+  if (!dossier) return false
+  const noteCount = documents.value.filter(
+    (item) => item.dossierId === dossierId && item.type === 'note_honoraire',
+  ).length
+  if (noteCount > 0) return false
+  return !dossierHasHonorairesMontant(dossier.montantHonorairesTotal)
+}
+
+function syncHonorairesFormFromDossier() {
+  const dossier = getDossierById(form.value.dossierId)
+  if (!dossier) return
+  honorairesForm.value.montant = dossier.montantHonorairesTotal > 0
+    ? String(dossier.montantHonorairesTotal)
+    : ''
+  honorairesForm.value.devise = normalizeDevise(dossier.deviseHonoraires) as Devise
+}
+
+async function bindDossierFromRoute(dossierId: string) {
+  if (!dossierId) return
+  form.value.dossierId = dossierId
+  await loadDocumentsForDossier(dossierId)
+  syncHonorairesFormFromDossier()
+
+  const documentId = props.initialDocumentId
+    || (typeof route.query.documentId === 'string' ? route.query.documentId : '')
+
+  if (documentId) {
+    const found = documents.value.find((item) => item.id === documentId)
+    if (found) await loadDocument(found)
+    return
+  }
+  if (documents.value.length > 0) {
+    await loadDocument(documents.value[0])
+    return
+  }
+  if (!dossierNeedsHonorairesSetup(dossierId)) {
+    applyDossierTemplate(dossierId)
+    syncResultatFromDossier(dossierId)
+  }
+}
+
 async function loadData() {
   loading.value = true
   try {
     await clientsStore.loadRegistry()
     await loadDossiers()
-    const dossierId = props.initialDossierId
-      || (typeof route.query.dossierId === 'string' ? route.query.dossierId : '')
-    if (dossierId) form.value.dossierId = dossierId
-
-    if (form.value.dossierId) {
-      await loadDocumentsForDossier(form.value.dossierId)
-    }
-
-    const documentId = props.initialDocumentId
-      || (typeof route.query.documentId === 'string' ? route.query.documentId : '')
-    if (documentId) {
-      const found = documents.value.find((item) => item.id === documentId)
-      if (found) await loadDocument(found)
-    }
+    await bindDossierFromRoute(resolveLinkedDossierId())
   } catch {
     showToast('error', 'Erreur lors du chargement')
   } finally {
@@ -242,12 +295,63 @@ async function loadData() {
   }
 }
 
+async function saveHonorairesSetup() {
+  const dossierId = form.value.dossierId
+  if (!dossierId || savingHonoraires.value) return
+
+  const montant = Number(honorairesForm.value.montant)
+  if (!dossierHasHonorairesMontant(montant)) {
+    showToast('error', NOTE_HONORAIRE_MESSAGES.missingMontant)
+    return
+  }
+
+  savingHonoraires.value = true
+  try {
+    await updateDoc(doc(db, 'dossiers', dossierId), {
+      montantHonorairesTotal: montant,
+      deviseHonoraires: honorairesForm.value.devise,
+      updatedAt: new Date().toISOString(),
+    })
+    const dossier = dossiers.value.find((item) => item.id === dossierId)
+    if (dossier) {
+      dossier.montantHonorairesTotal = montant
+      dossier.deviseHonoraires = honorairesForm.value.devise
+    }
+    applyDossierTemplate(dossierId)
+    syncResultatFromDossier(dossierId)
+    showToast('success', 'Montant enregistré — vous pouvez maintenant rédiger la note')
+  } catch {
+    showToast('error', 'Erreur lors de l’enregistrement du montant')
+  } finally {
+    savingHonoraires.value = false
+  }
+}
+
 onMounted(loadData)
 
+watch(
+  () => [route.query.dossierId, route.query.documentId, props.initialDossierId, props.initialDocumentId] as const,
+  async () => {
+    if (loading.value) return
+    await bindDossierFromRoute(resolveLinkedDossierId())
+  },
+)
+
 watch(() => form.value.dossierId, async (dossierId) => {
+  if (isDossierLocked.value && dossierId !== linkedDossierId.value) {
+    form.value.dossierId = linkedDossierId.value
+    return
+  }
   await loadDocumentsForDossier(dossierId)
-  applyDossierTemplate(dossierId)
-  syncResultatFromDossier(dossierId)
+  syncHonorairesFormFromDossier()
+  if (!form.value.id && dossierDocuments.value.length > 0) {
+    await loadDocument(dossierDocuments.value[0])
+    return
+  }
+  if (!dossierNeedsHonorairesSetup(dossierId)) {
+    applyDossierTemplate(dossierId)
+    syncResultatFromDossier(dossierId)
+  }
 })
 
 function applyDossierTemplate(dossierId: string, force = false) {
@@ -268,7 +372,7 @@ function applyDossierTemplate(dossierId: string, force = false) {
   }
 
   form.value.titre = `Note d'honoraires — ${dossier.motif}`
-  const html = buildNoteHtmlForDossier(dossier)
+  const html = normalizeNoteHonoraireHtml(buildNoteHtmlForDossier(dossier))
   form.value.contenuHtml = html
   syncEditorContent(html)
   if (force && form.value.id) {
@@ -293,29 +397,51 @@ function execCmd(command: string, value?: string) {
 }
 
 function newDocument() {
+  const dossierId = form.value.dossierId
+  if (dossierId) {
+    const check = evaluateCreateNoteEligibility(dossierId)
+    if (!check.ok) {
+      showToast('error', check.reason)
+      if (dossierDocuments.value.length > 0) {
+        void loadDocument(dossierDocuments.value[0])
+      }
+      return
+    }
+  }
+
   form.value = {
     id: null,
-    dossierId: form.value.dossierId,
+    dossierId,
     titre: 'Note d\'honoraires',
     contenuHtml: DEFAULT_CONTENT,
   }
-  if (form.value.dossierId) {
-    applyDossierTemplate(form.value.dossierId)
-    syncResultatFromDossier(form.value.dossierId)
+  if (dossierId) {
+    applyDossierTemplate(dossierId)
+    syncResultatFromDossier(dossierId)
   } else {
     resultatCloture.value = ''
     syncEditorContent(DEFAULT_CONTENT)
   }
 }
 
+function evaluateCreateNoteEligibility(dossierId: string) {
+  const dossier = dossiers.value.find((item) => item.id === dossierId)
+  return dossierCanCreateNoteHonoraire({
+    montantHonorairesTotal: dossier?.montantHonorairesTotal,
+    noteHonoraireId: dossier?.noteHonoraireId,
+    existingNotesCount: dossierDocuments.value.length,
+  })
+}
+
 async function loadDocument(document: DossierDocument) {
+  const contenuHtml = normalizeNoteHonoraireHtml(document.contenuHtml)
   form.value = {
     id: document.id,
     dossierId: document.dossierId,
     titre: document.titre,
-    contenuHtml: document.contenuHtml,
+    contenuHtml,
   }
-  syncEditorContent(document.contenuHtml)
+  syncEditorContent(contenuHtml)
 }
 
 async function saveDocument() {
@@ -335,45 +461,59 @@ async function saveDocument() {
     return
   }
 
+  if (!form.value.id) {
+    const check = evaluateCreateNoteEligibility(form.value.dossierId)
+    if (!check.ok) {
+      showToast('error', check.reason)
+      return
+    }
+  }
+
+  const contenuHtml = normalizeNoteHonoraireHtml(form.value.contenuHtml)
+  form.value.contenuHtml = contenuHtml
+
   saving.value = true
   try {
     const now = new Date().toISOString()
-    const payload = {
-      dossierId: form.value.dossierId,
-      type: 'note_honoraire' as const,
-      titre: form.value.titre.trim(),
-      contenuHtml: form.value.contenuHtml,
-      updatedAt: now,
-    }
 
     if (form.value.id) {
+      const payload = {
+        dossierId: form.value.dossierId,
+        type: 'note_honoraire' as const,
+        titre: form.value.titre.trim(),
+        contenuHtml,
+        updatedAt: now,
+      }
       await updateDoc(doc(db, 'dossier_documents', form.value.id), payload)
       showToast('success', 'Note honoraire mise à jour dans le dossier')
     } else {
       const issue = resultatCloture.value as DossierResultatIssue
-      const ref = await addDoc(documentsCol, { ...payload, createdAt: now })
-      form.value.id = ref.id
-      const { affectationsCloturees } = await cloturerDossierApresNoteHonoraire(
-        db,
-        form.value.dossierId,
-        issue,
-      )
+      const { noteId, affectationsCloturees } = await createNoteHonoraireWithCloture(db, {
+        dossierId: form.value.dossierId,
+        resultat: issue,
+        titre: form.value.titre.trim(),
+        contenuHtml,
+      })
+      form.value.id = noteId
       const dossier = dossiers.value.find((item) => item.id === form.value.dossierId)
       if (dossier) {
         dossier.statut = 'Clos'
         dossier.resultat = issue
+        dossier.noteHonoraireId = noteId
         if (!dossier.dateFermeture) dossier.dateFermeture = todayIsoDate()
       }
       const issueLabel = resultatCloture.value === 'gagné' ? 'gagnée' : 'perdue'
       const affHint = affectationsCloturees > 0
-        ? ` — ${affectationsCloturees} affectation(s) clôturée(s)`
+        ? ` — ${affectationsCloturees} affectation(s) terminée(s)`
         : ''
       showToast('success', `Note enregistrée — dossier ${issueLabel}${affHint}`)
     }
 
+    await loadDossiers()
     await loadDocumentsForDossier(form.value.dossierId)
-  } catch {
-    showToast('error', 'Erreur lors de l’enregistrement')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erreur lors de l’enregistrement'
+    showToast('error', message)
   } finally {
     saving.value = false
   }
@@ -414,9 +554,19 @@ const dossierDocuments = computed(() =>
   documents.value.filter((item) => item.dossierId === form.value.dossierId),
 )
 
+const createNoteEligibility = computed(() => {
+  if (!form.value.dossierId) {
+    return { ok: true as const }
+  }
+  return evaluateCreateNoteEligibility(form.value.dossierId)
+})
+
 const newDocBlockedReason = computed(() => {
   if (loading.value) return 'Chargement en cours…'
   if (dossiers.value.length === 0) return 'Aucun dossier disponible'
+  if (!form.value.dossierId) return 'Sélectionnez un dossier'
+  if (!createNoteEligibility.value.ok) return createNoteEligibility.value.reason
+  if (dossierDocuments.value.length > 0) return 'Une note existe déjà — ouvrez-la pour la modifier'
   return ''
 })
 
@@ -432,6 +582,33 @@ const isNewNote = computed(() => !form.value.id)
 const selectedDossierForNote = computed(() =>
   dossiers.value.find((item) => item.id === form.value.dossierId),
 )
+
+const linkedDossierId = computed(() => resolveLinkedDossierId())
+
+const isDossierLocked = computed(() => Boolean(linkedDossierId.value))
+
+const needsHonorairesSetup = computed(() => {
+  const dossier = selectedDossierForNote.value
+  if (!dossier || form.value.id) return false
+  if (dossierDocuments.value.length > 0) return false
+  return !dossierHasHonorairesMontant(dossier.montantHonorairesTotal)
+})
+
+const showNoteWorkflow = computed(() =>
+  Boolean(form.value.dossierId) && !needsHonorairesSetup.value,
+)
+
+const honorairesSaveBlockedReason = computed(() => {
+  if (savingHonoraires.value) return 'Enregistrement en cours…'
+  if (!form.value.dossierId) return 'Aucun dossier lié'
+  const montant = Number(honorairesForm.value.montant)
+  if (!dossierHasHonorairesMontant(montant)) {
+    return NOTE_HONORAIRE_MESSAGES.missingMontant
+  }
+  return ''
+})
+
+const canSaveHonoraires = computed(() => !honorairesSaveBlockedReason.value)
 
 const destinatairePreview = computed(() => {
   const d = selectedDossierForNote.value
@@ -452,8 +629,12 @@ const destinatairePreview = computed(() => {
 const saveBlockedReason = computed(() => {
   if (saving.value) return ''
   if (loading.value) return 'Chargement en cours…'
-  if (!form.value.dossierId) return 'Sélectionnez un dossier'
+  if (needsHonorairesSetup.value) return NOTE_HONORAIRE_MESSAGES.missingMontant
+  if (!form.value.dossierId) return 'Ouvrez la note depuis un dossier'
   if (!form.value.titre.trim()) return 'Le titre du document est obligatoire'
+  if (isNewNote.value && !createNoteEligibility.value.ok) {
+    return createNoteEligibility.value.reason
+  }
   if (isNewNote.value && !resultatCloture.value) {
     return 'Indiquez si l’affaire est gagnée ou perdue'
   }
@@ -470,7 +651,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+  <div class="min-h-screen bg-white text-slate-900">
     <div
       v-if="toast.show"
       class="fixed right-6 top-6 z-[2100] rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg"
@@ -480,14 +661,14 @@ onMounted(() => {
     </div>
 
     <div class="mx-auto max-w-[1600px] p-6">
-      <header class="note-no-print mb-6 flex flex-col gap-4 rounded-2xl bg-white px-6 py-5 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 lg:flex-row lg:items-center lg:justify-between">
+      <header class="note-no-print mb-6 flex flex-col gap-4 rounded-2xl bg-white px-6 py-5 shadow-sm ring-1 ring-slate-200 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 class="text-2xl font-semibold">Note honoraire</h1>
           <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Modèle cabinet CCEAJ (Likasi). La note est toujours adressée au client du dossier (payeur des honoraires), jamais à la partie adverse.
           </p>
         </div>
-        <div class="flex flex-wrap items-end gap-2">
+        <div v-if="showNoteWorkflow" class="flex flex-wrap items-end gap-2">
           <AppButtonGuard :blocked="!canNewDoc" :reason="newDocBlockedReason">
             <button
               type="button"
@@ -524,17 +705,125 @@ onMounted(() => {
         </div>
       </header>
 
-      <div v-if="loading" class="rounded-2xl bg-white p-10 text-center text-slate-500 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+      <div v-if="loading" class="rounded-2xl bg-white p-10 text-center text-slate-500 shadow-sm ring-1 ring-slate-200">
         Chargement…
       </div>
 
-      <div v-else class="grid gap-6 xl:grid-cols-[320px_1fr]">
+      <div
+        v-else-if="!form.dossierId && !isDossierLocked"
+        class="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-slate-200"
+      >
+        <p class="text-lg font-semibold">
+          Aucun dossier sélectionné
+        </p>
+        <p class="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400">
+          La note d’honoraires doit être créée depuis un dossier. Ouvrez un dossier et cliquez sur « Note d’honoraires ».
+        </p>
+        <RouterLink
+          :to="{ name: 'dossiers' }"
+          class="mt-6 inline-block rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
+        >
+          Voir les dossiers
+        </RouterLink>
+      </div>
+
+      <div
+        v-else-if="needsHonorairesSetup && selectedDossierForNote"
+        class="mx-auto max-w-2xl"
+      >
+        <section class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <p class="text-primary text-xs font-semibold tracking-wide uppercase">
+            Étape 1 — Honoraires du dossier
+          </p>
+          <h2 class="mt-1 text-xl font-semibold">
+            {{ selectedDossierForNote.motif }}
+          </h2>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Client : <strong>{{ selectedDossierForNote.clientNom || '—' }}</strong>
+            <span v-if="selectedDossierForNote.juridiction"> · {{ selectedDossierForNote.juridiction }}</span>
+          </p>
+          <p class="mt-4 text-sm text-slate-600 dark:text-slate-300">
+            Avant de rédiger la note, renseignez le montant des honoraires. Ce montant sera enregistré sur le dossier et repris automatiquement dans la note.
+          </p>
+
+          <div class="mt-6 grid gap-4 sm:grid-cols-[1fr_auto]">
+            <div>
+              <label class="mb-1.5 block text-sm font-medium">
+                Montant des honoraires <span class="text-rose-500">*</span>
+              </label>
+              <input
+                v-model="honorairesForm.montant"
+                type="number"
+                min="0"
+                step="0.01"
+                class="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm"
+                placeholder="Ex. 500000"
+                @keyup.enter="saveHonorairesSetup"
+              >
+            </div>
+            <div>
+              <label class="mb-1.5 block text-sm font-medium">Devise</label>
+              <select
+                v-model="honorairesForm.devise"
+                class="w-full min-w-[120px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm"
+              >
+                <option
+                  v-for="option in DEVISE_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mt-6 flex flex-wrap gap-3">
+            <AppButtonGuard
+              :blocked="!canSaveHonoraires"
+              :reason="honorairesSaveBlockedReason"
+              show-hint
+            >
+              <button
+                type="button"
+                class="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white"
+                :class="BTN_DISABLED"
+                :disabled="!canSaveHonoraires"
+                @click="saveHonorairesSetup"
+              >
+                {{ savingHonoraires ? 'Enregistrement…' : 'Valider et continuer' }}
+              </button>
+            </AppButtonGuard>
+            <RouterLink
+              :to="{ name: 'dossierFiche', params: { dossierId: form.dossierId } }"
+              class="rounded-xl border border-slate-300 px-4 py-2.5 text-sm dark:border-slate-700"
+            >
+              Retour au dossier
+            </RouterLink>
+          </div>
+        </section>
+      </div>
+
+      <div v-else-if="showNoteWorkflow" class="grid gap-6 xl:grid-cols-[320px_1fr]">
         <aside class="note-no-print space-y-4">
-          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <label class="mb-2 block text-sm font-medium">Dossier concerné <span class="text-rose-500">*</span></label>
+            <template v-if="isDossierLocked && selectedDossierForNote">
+              <p class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
+                {{ selectedDossierForNote.motif }}
+                <span class="text-slate-500">— {{ selectedDossierForNote.clientNom || 'Sans client' }}</span>
+              </p>
+              <RouterLink
+                :to="{ name: 'dossierFiche', params: { dossierId: form.dossierId } }"
+                class="mt-2 inline-block text-xs font-medium text-primary hover:underline"
+              >
+                Voir la fiche dossier
+              </RouterLink>
+            </template>
             <select
+              v-else
               v-model="form.dossierId"
-              class="w-full rounded-xl border px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800"
+              class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
             >
               <option value="">Choisir un dossier</option>
               <option v-for="dossier in dossiers" :key="dossier.id" :value="dossier.id">
@@ -558,6 +847,18 @@ onMounted(() => {
             >
               {{ isNewNote ? 'Actualiser le modèle' : 'Corriger le destinataire (client)' }}
             </button>
+            <p
+              v-if="form.dossierId && selectedDossierForNote && selectedDossierForNote.montantHonorairesTotal > 0"
+              class="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
+            >
+              Honoraires : <strong>{{ selectedDossierForNote.montantHonorairesTotal }} {{ selectedDossierForNote.deviseHonoraires }}</strong>
+            </p>
+            <p
+              v-if="form.dossierId && dossierDocuments.length > 0 && isNewNote"
+              class="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+            >
+              Une note d’honoraires existe déjà pour ce dossier. Seule la modification est possible.
+            </p>
           </div>
 
           <div
@@ -571,7 +872,7 @@ onMounted(() => {
               À l’enregistrement, le dossier sera clôturé, les affectations en cours prendront fin et les compteurs gagnées / perdues des avocats seront mis à jour.
             </p>
             <div class="flex flex-col gap-2">
-              <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm dark:border-emerald-900 dark:bg-slate-900">
+              <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm">
                 <input
                   v-model="resultatCloture"
                   type="radio"
@@ -581,7 +882,7 @@ onMounted(() => {
                 <span class="font-medium text-emerald-800 dark:text-emerald-200">Gagnée</span>
                 <span class="text-xs text-slate-500">— décision favorable au client</span>
               </label>
-              <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm dark:border-rose-900 dark:bg-slate-900">
+              <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm">
                 <input
                   v-model="resultatCloture"
                   type="radio"
@@ -594,16 +895,16 @@ onMounted(() => {
             </div>
           </div>
 
-          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <label class="mb-2 block text-sm font-medium">Titre du document</label>
             <input
               v-model="form.titre"
-              class="w-full rounded-xl border px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800"
+              class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
               placeholder="Note d'honoraires — …"
             />
           </div>
 
-          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
+          <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <h2 class="mb-3 text-sm font-semibold">Documents du dossier</h2>
             <p v-if="!form.dossierId" class="text-xs text-slate-500">Sélectionnez un dossier.</p>
             <p v-else-if="dossierDocuments.length === 0" class="text-xs text-slate-500">
@@ -632,8 +933,8 @@ onMounted(() => {
           </div>
         </aside>
 
-        <section class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700">
-          <div class="note-no-print flex flex-wrap gap-1 border-b border-slate-200 p-2 dark:border-slate-700">
+        <section class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+          <div class="note-no-print flex flex-wrap gap-1 border-b border-slate-200 bg-white p-2">
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm font-bold hover:bg-slate-100 dark:hover:bg-slate-800" @click="execCmd('bold')">G</button>
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm italic hover:bg-slate-100 dark:hover:bg-slate-800" @click="execCmd('italic')">I</button>
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm underline hover:bg-slate-100 dark:hover:bg-slate-800" @click="execCmd('underline')">S</button>
@@ -654,7 +955,7 @@ onMounted(() => {
 
           <div
             id="note-honoraire-print-area"
-            class="min-h-[600px] bg-white p-8 text-slate-900 dark:bg-white dark:text-slate-900"
+            class="min-h-[600px] bg-white p-8 text-slate-900"
           >
             <div
               ref="editorRef"
@@ -671,6 +972,23 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.note-editor {
+  background: #fff;
+  color: #0f172a;
+}
+
+.note-editor :deep(*) {
+  background-color: transparent;
+}
+
+.note-editor :deep(table),
+.note-editor :deep(thead),
+.note-editor :deep(tr),
+.note-editor :deep(th),
+.note-editor :deep(td) {
+  background-color: #fff !important;
+}
+
 .note-editor :deep(table) {
   width: 100%;
   border-collapse: collapse;

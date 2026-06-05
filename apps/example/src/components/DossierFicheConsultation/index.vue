@@ -17,6 +17,11 @@ import {
   PIECES_JURIDIQUES_COMING_SOON_HINT,
 } from '@/constants/features'
 import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
+import { DOSSIER_MESSAGES } from '@/constants/dossier-messages'
+import { NOTE_HONORAIRE_MESSAGES } from '@/constants/note-honoraire'
+import { hasDossierFinancialData } from '@/utils/dossier-paiement'
+import { dossierCanCreateNoteHonoraire } from '@/utils/note-honoraire-guards'
+import { normalizeNoteHonoraireHtml } from '@/utils/document-html-normalize'
 import { printFicheConsultation } from '@/utils/print-document'
 
 const props = defineProps<{
@@ -29,6 +34,11 @@ const props = defineProps<{
   canPaiements?: boolean
   canPieces?: boolean
   canAvocats?: boolean
+  canViewClients?: boolean
+  /** Affiche l’onglet / section financière (paiements, soldes). */
+  canViewFinances?: boolean
+  /** Vue centrée finances (rôle finance) : masque le suivi détaillé. */
+  financeOnly?: boolean
 }>()
 
 const STATUT_CLASS: Record<string, string> = {
@@ -39,6 +49,15 @@ const STATUT_CLASS: Record<string, string> = {
 }
 
 const expandedNoteId = ref<string | null>(null)
+const activeTab = ref<'suivi' | 'finances'>(props.financeOnly ? 'finances' : 'suivi')
+
+const honorairesPaiements = computed(() =>
+  props.insight?.paiements.filter((p) => p.nature_paiement === 'Honoraires') ?? [],
+)
+
+const autresPaiements = computed(() =>
+  props.insight?.paiements.filter((p) => p.nature_paiement !== 'Honoraires') ?? [],
+)
 
 const issueCategory = computed(() =>
   props.insight
@@ -53,6 +72,28 @@ const resultatIssue = computed(() =>
 const notesHonoraires = computed(() =>
   props.insight?.documents.filter((d) => d.type === 'note_honoraire') ?? [],
 )
+
+const createNoteEligibility = computed(() => {
+  if (!props.insight) return { ok: true as const }
+  return dossierCanCreateNoteHonoraire({
+    montantHonorairesTotal: props.insight.montantHonorairesTotal,
+    existingNotesCount: notesHonoraires.value.length,
+  })
+})
+
+const hasNoteHonoraire = computed(() => notesHonoraires.value.length > 0)
+
+const noteAlreadyExists = computed(() =>
+  !createNoteEligibility.value.ok
+  && createNoteEligibility.value.reason === NOTE_HONORAIRE_MESSAGES.alreadyExists,
+)
+
+const noteHonoraireLinkQuery = computed(() => {
+  const query: Record<string, string> = { dossierId: props.dossierId }
+  const existing = notesHonoraires.value[0]
+  if (existing) query.documentId = existing.id
+  return query
+})
 
 const piecesJuridiques = computed(() =>
   props.insight?.documents.filter((d) => d.type === 'piece_juridique') ?? [],
@@ -71,8 +112,38 @@ const affectationsActives = computed(() => {
   )
 })
 
-const dossierEstSuivi = computed(() =>
-  affectationsActives.value.length > 0 || (props.insight?.avocats.length ?? 0) > 0,
+const deviseHonoraires = computed(() =>
+  normalizeDevise(props.insight?.deviseHonoraires),
+)
+
+const hasFinancialInfo = computed(() => {
+  if (!props.insight) return false
+  return hasDossierFinancialData(
+    props.insight.montantHonorairesTotal,
+    props.insight.paiements.length,
+  )
+})
+
+const hasDocuments = computed(() => (props.insight?.documents.length ?? 0) > 0)
+
+const isDossierClos = computed(() => props.insight?.statut === 'Clos')
+
+const showAssignmentSections = computed(() => !isDossierClos.value)
+
+const isUnassigned = computed(() => affectationsActives.value.length === 0)
+
+const showUnassignedNoDocumentsNotice = computed(() =>
+  Boolean(props.insight)
+  && showAssignmentSections.value
+  && isUnassigned.value
+  && !hasDocuments.value,
+)
+
+const showUnassignedNotice = computed(() =>
+  Boolean(props.insight)
+  && showAssignmentSections.value
+  && isUnassigned.value
+  && hasDocuments.value,
 )
 
 function toggleNotePreview(note: DossierInsightDocument) {
@@ -82,6 +153,10 @@ function toggleNotePreview(note: DossierInsightDocument) {
 function imprimerFicheConsultation() {
   if (!props.insight) return
   printFicheConsultation(props.insight)
+}
+
+function notePreviewHtml(html: string) {
+  return normalizeNoteHonoraireHtml(html)
 }
 
 function stripHtmlPreview(html: string, max = 280): string {
@@ -112,31 +187,87 @@ function stripHtmlPreview(html: string, max = 280): string {
     </div>
 
     <template v-else-if="insight">
+      <div
+        v-if="showUnassignedNoDocumentsNotice"
+        class="fiche-consultation-no-print mb-6 rounded-2xl border border-amber-200 bg-amber-50/90 p-5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+      >
+        <p class="font-medium">
+          {{ DOSSIER_MESSAGES.unassignedNoDocuments }}
+        </p>
+        <p v-if="canAvocats" class="mt-2 text-amber-800/90 dark:text-amber-200/90">
+          Rendez-vous dans
+          <RouterLink :to="{ name: 'avocats' }" class="font-medium underline">
+            Gestion des avocats
+          </RouterLink>
+          pour affecter un responsable à ce dossier.
+        </p>
+      </div>
+
+      <div
+        v-else-if="showUnassignedNotice"
+        class="fiche-consultation-no-print mb-6 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+      >
+        {{ DOSSIER_MESSAGES.unassigned }}
+      </div>
+
+      <!-- Onglets suivi / finances -->
+      <div
+        v-if="canViewFinances && !financeOnly"
+        class="fiche-consultation-no-print mb-6 flex gap-2 rounded-xl bg-muted/40 p-1"
+      >
+        <button
+          type="button"
+          class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition"
+          :class="activeTab === 'suivi' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+          @click="activeTab = 'suivi'"
+        >
+          Suivi du dossier
+        </button>
+        <button
+          type="button"
+          class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition"
+          :class="activeTab === 'finances' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+          @click="activeTab = 'finances'"
+        >
+          Finances
+        </button>
+      </div>
+
       <!-- Actions rapides -->
-      <div class="fiche-consultation-no-print mb-6 flex flex-wrap gap-2">
+      <div
+        v-if="!financeOnly || activeTab === 'finances'"
+        class="fiche-consultation-no-print mb-6 flex flex-wrap gap-2"
+      >
         <RouterLink
-          v-if="canNoteHonoraire"
+          v-if="canNoteHonoraire && !financeOnly && !hasNoteHonoraire"
           :to="{ name: 'noteHonoraire', query: { dossierId } }"
           class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
         >
           Note d’honoraires
         </RouterLink>
         <RouterLink
-          v-if="canAgenda"
+          v-else-if="canNoteHonoraire && !financeOnly && hasNoteHonoraire"
+          :to="{ name: 'noteHonoraire', query: noteHonoraireLinkQuery }"
+          class="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
+        >
+          Ouvrir la note d’honoraires
+        </RouterLink>
+        <RouterLink
+          v-if="canAgenda && !financeOnly"
           :to="{ name: 'agenda', query: { dossierId } }"
           class="rounded-xl bg-sky-100 px-4 py-2 text-sm font-medium text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
         >
           Agenda
         </RouterLink>
         <RouterLink
-          v-if="canPaiements && dossierEstSuivi"
+          v-if="canPaiements"
           :to="{ name: 'paiement', query: { dossierId, open: 'add' } }"
           class="rounded-xl bg-violet-100 px-4 py-2 text-sm font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
         >
-          Paiements
+          Enregistrer un paiement
         </RouterLink>
         <span
-          v-if="canPieces && PIECES_JURIDIQUES_COMING_SOON"
+          v-if="canPieces && !financeOnly && PIECES_JURIDIQUES_COMING_SOON"
           :class="['rounded-xl border border-border px-4 py-2 text-sm', COMING_SOON_CONTROL_CLASS]"
           :title="comingSoonTitle()"
         >
@@ -144,27 +275,28 @@ function stripHtmlPreview(html: string, max = 280): string {
           <ComingSoonBadge />
         </span>
         <RouterLink
-          v-else-if="canPieces"
+          v-else-if="canPieces && !financeOnly"
           :to="{ name: 'piecesJuridiques', query: { dossierId } }"
           class="rounded-xl border border-border px-4 py-2 text-sm hover:bg-accent"
         >
           Pièces juridiques
         </RouterLink>
         <RouterLink
-          v-if="canAvocats"
+          v-if="canAvocats && !financeOnly && showAssignmentSections"
           :to="{ name: 'avocats' }"
           class="rounded-xl border border-border px-4 py-2 text-sm hover:bg-accent"
         >
           Gérer les avocats
         </RouterLink>
         <RouterLink
-          v-if="insight.clientId"
+          v-if="insight.clientId && canViewClients && !financeOnly"
           :to="{ name: 'clientDetail', params: { clientId: insight.clientId }, query: { from: 'dossier' } }"
           class="rounded-xl border border-border px-4 py-2 text-sm hover:bg-accent"
         >
           Fiche client
         </RouterLink>
         <button
+          v-if="!financeOnly"
           type="button"
           class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
           @click="imprimerFicheConsultation"
@@ -173,6 +305,143 @@ function stripHtmlPreview(html: string, max = 280): string {
         </button>
       </div>
 
+      <!-- En-tête minimal (vue finances) -->
+      <section
+        v-if="financeOnly"
+        class="fiche-consultation-no-print mb-6 rounded-2xl bg-card p-6 ring-1 ring-border"
+      >
+        <p class="text-primary text-xs font-semibold tracking-wide uppercase">
+          Dossier · {{ insight.id.slice(0, 8) }}…
+        </p>
+        <h2 class="mt-1 text-xl font-semibold">
+          {{ insight.motif }}
+        </h2>
+        <p class="text-muted-foreground mt-1 text-sm">
+          {{ insight.clientNom || 'Client non renseigné' }}
+          · {{ insight.juridiction || 'Juridiction non renseignée' }}
+        </p>
+        <span
+          class="mt-3 inline-block rounded-full px-3 py-1 text-xs font-medium"
+          :class="STATUT_CLASS[insight.statut] ?? STATUT_CLASS.Ouvert"
+        >
+          {{ insight.statut }}
+        </span>
+      </section>
+
+      <!-- Section financière -->
+      <section
+        v-if="canViewFinances && (financeOnly || activeTab === 'finances')"
+        id="finances"
+        class="fiche-consultation-no-print mb-8 rounded-2xl bg-card p-6 ring-1 ring-border"
+      >
+        <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 class="text-lg font-semibold">
+              Situation financière
+            </h3>
+            <p class="text-muted-foreground mt-1 text-sm">
+              Honoraires, versements et solde restant — tri du plus récent au plus ancien.
+            </p>
+          </div>
+          <RouterLink
+            v-if="canPaiements"
+            :to="{ name: 'paiement', query: { dossierId } }"
+            class="text-sm font-medium text-primary hover:underline"
+          >
+            Tous les paiements →
+          </RouterLink>
+        </div>
+
+        <div
+          v-if="!hasFinancialInfo"
+          class="mb-6 rounded-xl border border-amber-200 bg-amber-50/80 p-5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          <p class="font-medium">
+            Aucune information financière disponible pour ce dossier.
+          </p>
+          <p class="mt-2 text-amber-800/90 dark:text-amber-200/90">
+            Aucun montant d’honoraires ni paiement n’a encore été enregistré.
+            <template v-if="canPaiements">
+              Vous pouvez définir les honoraires ou enregistrer un premier versement.
+            </template>
+          </p>
+        </div>
+
+        <template v-else>
+          <div class="mb-6 grid gap-4 sm:grid-cols-3">
+            <div class="rounded-xl border border-border bg-muted/20 p-4">
+              <p class="text-muted-foreground text-xs uppercase">Montant dû (honoraires)</p>
+              <p class="mt-1 text-xl font-semibold">
+                {{ formatMoney(insight.montantHonorairesTotal, deviseHonoraires) }}
+              </p>
+            </div>
+            <div class="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+              <p class="text-xs uppercase text-emerald-800 dark:text-emerald-300">Total versé</p>
+              <p class="mt-1 text-xl font-semibold text-emerald-900 dark:text-emerald-100">
+                {{ formatMoney(insight.totalPaye, deviseHonoraires) }}
+              </p>
+            </div>
+            <div class="rounded-xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+              <p class="text-xs uppercase text-amber-800 dark:text-amber-300">Solde restant</p>
+              <p class="mt-1 text-xl font-semibold text-amber-900 dark:text-amber-100">
+                {{ formatMoney(insight.soldeRestant, deviseHonoraires) }}
+              </p>
+            </div>
+          </div>
+
+          <h4 class="mb-3 text-sm font-semibold">
+            Historique des paiements ({{ insight.paiements.length }})
+          </h4>
+
+          <div
+            v-if="insight.paiements.length === 0"
+            class="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground"
+          >
+            Montant dû renseigné, mais aucun versement enregistré pour l’instant.
+          </div>
+
+          <div v-else class="overflow-x-auto rounded-xl border border-border">
+          <table class="w-full min-w-[640px] text-left text-sm">
+            <thead class="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th class="px-4 py-3 font-medium">Date</th>
+                <th class="px-4 py-3 font-medium">Montant</th>
+                <th class="px-4 py-3 font-medium">Mode</th>
+                <th class="px-4 py-3 font-medium">Référence</th>
+                <th class="px-4 py-3 font-medium">Nature</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="p in insight.paiements"
+                :key="p.id"
+                class="border-b border-border last:border-0"
+              >
+                <td class="px-4 py-3 whitespace-nowrap">{{ formatDateFr(p.date_paiement) }}</td>
+                <td class="px-4 py-3 font-medium whitespace-nowrap">
+                  {{ formatMoney(p.montant, normalizeDevise(p.devise)) }}
+                </td>
+                <td class="px-4 py-3">{{ p.mode || '—' }}</td>
+                <td class="px-4 py-3 max-w-[200px] truncate" :title="p.reference || undefined">
+                  {{ p.reference || '—' }}
+                </td>
+                <td class="px-4 py-3 text-muted-foreground">{{ p.natureLabel }}</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+
+          <p
+            v-if="autresPaiements.length > 0"
+            class="text-muted-foreground mt-4 text-xs"
+          >
+            {{ honorairesPaiements.length }} versement(s) d’honoraires
+            · {{ autresPaiements.length }} autre(s) paiement(s) (consultation, frais…)
+          </p>
+        </template>
+      </section>
+
+      <template v-if="!financeOnly && activeTab === 'suivi'">
       <!-- Formulaire officiel EMK&C (aperçu + impression) -->
       <section id="fiche-consultation-officielle" class="fiche-consultation-print-root mb-8">
         <div class="fiche-consultation-no-print mb-3">
@@ -226,7 +495,56 @@ function stripHtmlPreview(html: string, max = 280): string {
         </div>
       </section>
 
-      <div class="fiche-consultation-no-print grid gap-6 lg:grid-cols-2">
+      <section
+        v-if="isDossierClos"
+        class="fiche-consultation-no-print mb-6 rounded-2xl bg-card p-6 ring-1 ring-border"
+      >
+        <h3 class="mb-4 font-semibold">
+          Synthèse de clôture
+        </h3>
+        <dl class="grid gap-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt class="text-muted-foreground text-xs uppercase">Date de clôture</dt>
+            <dd class="mt-0.5 font-medium">
+              {{ insight.date_fermeture ? formatDateFr(insight.date_fermeture) : '—' }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-muted-foreground text-xs uppercase">Résultat</dt>
+            <dd class="mt-0.5 font-medium">
+              <span
+                v-if="resultatIssue"
+                class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium"
+                :class="RESULTAT_ISSUE_META[resultatIssue].badgeClass"
+              >
+                {{ RESULTAT_ISSUE_META[resultatIssue].label }}
+              </span>
+              <span v-else>—</span>
+            </dd>
+          </div>
+          <div v-if="insight.resume_affaire" class="sm:col-span-2">
+            <dt class="text-muted-foreground text-xs uppercase">Résumé de l’affaire</dt>
+            <dd class="mt-0.5 whitespace-pre-wrap font-medium">{{ insight.resume_affaire }}</dd>
+          </div>
+          <div v-if="insight.avocats.length" class="sm:col-span-2">
+            <dt class="text-muted-foreground text-xs uppercase">Avocats ayant suivi le dossier</dt>
+            <dd class="mt-2 flex flex-wrap gap-2">
+              <span
+                v-for="av in insight.avocats"
+                :key="av.id"
+                class="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+              >
+                {{ av.nom }}{{ av.role ? ` (${av.role})` : '' }}
+              </span>
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <div
+        class="fiche-consultation-no-print grid gap-6"
+        :class="showAssignmentSections ? 'lg:grid-cols-2' : ''"
+      >
         <!-- Client -->
         <section class="fiche-consultation-no-print rounded-2xl bg-card p-6 ring-1 ring-border">
           <h3 class="mb-4 font-semibold">
@@ -259,7 +577,10 @@ function stripHtmlPreview(html: string, max = 280): string {
         </section>
 
         <!-- Avocats en charge -->
-        <section class="fiche-consultation-no-print rounded-2xl bg-card p-6 ring-1 ring-border">
+        <section
+          v-if="showAssignmentSections"
+          class="fiche-consultation-no-print rounded-2xl bg-card p-6 ring-1 ring-border"
+        >
           <h3 class="mb-1 font-semibold">
             Avocat(s) en charge
           </h3>
@@ -305,7 +626,10 @@ function stripHtmlPreview(html: string, max = 280): string {
       </div>
 
       <!-- Historique affectations -->
-      <section class="fiche-consultation-no-print mt-6 rounded-2xl bg-card p-6 ring-1 ring-border">
+      <section
+        v-if="showAssignmentSections"
+        class="fiche-consultation-no-print mt-6 rounded-2xl bg-card p-6 ring-1 ring-border"
+      >
         <h3 class="mb-4 font-semibold">
           Historique des affectations
         </h3>
@@ -360,12 +684,19 @@ function stripHtmlPreview(html: string, max = 280): string {
             </p>
           </div>
           <RouterLink
-            v-if="canNoteHonoraire"
+            v-if="canNoteHonoraire && !hasNoteHonoraire"
             :to="{ name: 'noteHonoraire', query: { dossierId } }"
             class="text-sm font-medium text-primary hover:underline"
           >
             + Nouvelle note
           </RouterLink>
+          <span
+            v-else-if="canNoteHonoraire && noteAlreadyExists"
+            class="cursor-not-allowed text-sm text-amber-700 dark:text-amber-300"
+            :title="NOTE_HONORAIRE_MESSAGES.alreadyExists"
+          >
+            {{ NOTE_HONORAIRE_MESSAGES.alreadyExists }}
+          </span>
         </div>
 
         <div
@@ -373,6 +704,13 @@ function stripHtmlPreview(html: string, max = 280): string {
           class="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground"
         >
           Aucune note d’honoraires pour ce dossier.
+          <RouterLink
+            v-if="canNoteHonoraire"
+            :to="{ name: 'noteHonoraire', query: { dossierId } }"
+            class="ml-1 font-medium text-primary hover:underline"
+          >
+            Créer la note
+          </RouterLink>
         </div>
 
         <ul v-else class="space-y-4">
@@ -418,8 +756,8 @@ function stripHtmlPreview(html: string, max = 280): string {
               </p>
               <div
                 v-if="note.contenuHtml"
-                class="note-honoraire-preview max-h-96 overflow-y-auto rounded-lg border border-border bg-white p-4 text-sm dark:bg-slate-900"
-                v-html="note.contenuHtml"
+                class="note-honoraire-preview max-h-96 overflow-y-auto rounded-lg border border-border bg-white p-4 text-sm text-slate-900"
+                v-html="notePreviewHtml(note.contenuHtml)"
               />
               <p v-else class="text-sm text-muted-foreground">
                 Contenu non disponible.
@@ -429,36 +767,8 @@ function stripHtmlPreview(html: string, max = 280): string {
         </ul>
       </section>
 
-      <div class="fiche-consultation-no-print mt-6 grid gap-6 lg:grid-cols-2">
-        <!-- Paiements -->
-        <section class="rounded-2xl bg-card p-6 ring-1 ring-border">
-          <h3 class="mb-4 font-semibold">
-            Paiements ({{ insight.paiements.length }})
-          </h3>
-          <p class="text-muted-foreground mb-3 text-sm">
-            Total versé :
-            <span class="font-medium text-foreground">
-              {{ formatMoney(insight.totalPaye, normalizeDevise(insight.deviseHonoraires)) }}
-            </span>
-          </p>
-          <ul
-            v-if="insight.paiements.length"
-            class="max-h-72 space-y-2 overflow-y-auto text-sm"
-          >
-            <li
-              v-for="p in insight.paiements"
-              :key="p.id"
-              class="flex justify-between gap-2 rounded-lg border border-border px-3 py-2"
-            >
-              <span>{{ formatDateFr(p.date_paiement) }} · {{ p.natureLabel }} · {{ p.mode || '—' }}</span>
-              <span class="font-medium">{{ formatMoney(p.montant, normalizeDevise(p.devise)) }}</span>
-            </li>
-          </ul>
-          <p v-else class="text-sm text-muted-foreground">Aucun paiement enregistré.</p>
-        </section>
-
-        <!-- Pièces juridiques -->
-        <section class="rounded-2xl bg-card p-6 ring-1 ring-border">
+      <!-- Pièces juridiques -->
+        <section class="fiche-consultation-no-print mt-6 rounded-2xl bg-card p-6 ring-1 ring-border">
           <h3 class="mb-4 flex flex-wrap items-center gap-2 font-semibold">
             <span>Pièces juridiques ({{ piecesJuridiques.length }})</span>
             <ComingSoonBadge v-if="PIECES_JURIDIQUES_COMING_SOON" />
@@ -500,12 +810,17 @@ function stripHtmlPreview(html: string, max = 280): string {
             Ajouter une pièce →
           </RouterLink>
         </section>
-      </div>
+      </template>
     </template>
   </div>
 </template>
 
 <style scoped>
+.note-honoraire-preview {
+  background: #fff;
+  color: #0f172a;
+}
+
 .note-honoraire-preview :deep(p) {
   margin-bottom: 0.5rem;
 }
@@ -514,6 +829,14 @@ function stripHtmlPreview(html: string, max = 280): string {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+  background: #fff;
+}
+
+.note-honoraire-preview :deep(thead),
+.note-honoraire-preview :deep(tr),
+.note-honoraire-preview :deep(th),
+.note-honoraire-preview :deep(td) {
+  background-color: #fff !important;
 }
 </style>
 

@@ -4,6 +4,7 @@ import { mapAffectationFromFirestore, mapAvocatFromFirestore, mapClientFromFires
 import { db } from '@/firebase'
 import {
   buildClientRegistry,
+  countDossiersForClient,
   filterDossiersForClient,
   findExactClientInRegistry,
   getClientById,
@@ -191,6 +192,10 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
     )
   }
 
+  function getClientDossiersCount(client: ClientRecord): number {
+    return countDossiersForClient(dossiersRaw.value, client)
+  }
+
   function getClientAvocatsLabel(client: ClientRecord): string {
     const dossiers = filterDossiersForClient(
       dossiersRaw.value,
@@ -273,6 +278,7 @@ export const useDomainClientsStore = defineStore('domainClients', () => {
     fetchClientDetail,
     fetchClientRecord,
     getDossierAvocats,
+    getClientDossiersCount,
     getClientAvocatsLabel,
     formatDossierAvocatsLabel,
     genreSuggestions,

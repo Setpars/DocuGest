@@ -19,6 +19,7 @@ export type DossierListView = {
   clientAdresse?: string
   clientTelephone: string
   montantHonorairesTotal: number
+  noteHonoraireId?: string
   deviseHonoraires: Devise
   avocatId?: string
   resultat?: string
@@ -43,6 +44,7 @@ export function mapDossierDocFromRaw(raw: DossierRawRecord): DossierListView {
     clientTelephone: String(data.clientTelephone ?? data.telephone ?? ''),
     montantHonorairesTotal: Number(data.montantHonorairesTotal ?? 0),
     deviseHonoraires: normalizeDevise(data.deviseHonoraires),
+    noteHonoraireId: data.noteHonoraireId ? String(data.noteHonoraireId) : undefined,
     avocatId: String(data.avocatId ?? ''),
     resultat: String(data.resultat ?? ''),
   }

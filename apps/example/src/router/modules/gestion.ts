@@ -3,7 +3,7 @@ import {
   PIECES_JURIDIQUES_COMING_SOON,
   PIECES_JURIDIQUES_COMING_SOON_HINT,
 } from '@/constants/features'
-import { PERMISSIONS } from '@/constants/permissions'
+import { AUTH_DOSSIERS, PERMISSIONS } from '@/constants/permissions'
 
 const Layout = () => import('@/layouts/index.vue')
 
@@ -58,7 +58,7 @@ const gestionRoutes: RouteRecordRaw[] = [
     meta: {
       title: 'Dossiers',
       icon: 'i-carbon:folder',
-      auth: PERMISSIONS.dossiers,
+      auth: [...AUTH_DOSSIERS],
       expand: true,
       sort: 50,
     },
@@ -70,7 +70,7 @@ const gestionRoutes: RouteRecordRaw[] = [
         meta: {
           title: 'Tous les dossiers',
           icon: 'i-carbon:folder',
-          auth: PERMISSIONS.dossiers,
+          auth: [...AUTH_DOSSIERS],
           sort: 30,
         },
       },
@@ -81,7 +81,7 @@ const gestionRoutes: RouteRecordRaw[] = [
         meta: {
           title: 'Dossiers en cours',
           icon: 'i-carbon:in-progress',
-          auth: PERMISSIONS.dossiers,
+          auth: [...AUTH_DOSSIERS],
           sort: 20,
         },
       },
@@ -107,7 +107,7 @@ const gestionRoutes: RouteRecordRaw[] = [
           menu: false,
           breadcrumb: true,
           activeMenu: '/gestion/dossiers',
-          auth: PERMISSIONS.dossiers,
+          auth: [...AUTH_DOSSIERS],
         },
       },
     ],
@@ -159,15 +159,15 @@ const gestionRoutes: RouteRecordRaw[] = [
       },
     ],
   },
-  // —— Documents (hors entités UML principales) ——
+  // —— Note d’honoraires (accès uniquement depuis un dossier) ——
   {
     path: '/gestion/note-honoraire',
     component: Layout,
     meta: {
       title: 'Note honoraire',
-      icon: 'i-carbon:document',
+      menu: false,
+      breadcrumb: false,
       auth: PERMISSIONS.noteHonoraire,
-      sort: 35,
     },
     children: [
       {
@@ -178,21 +178,20 @@ const gestionRoutes: RouteRecordRaw[] = [
           title: 'Note honoraire',
           menu: false,
           breadcrumb: false,
-          activeMenu: '/gestion/note-honoraire',
+          activeMenu: '/gestion/dossiers',
           auth: PERMISSIONS.noteHonoraire,
         },
       },
     ],
   },
-  // —— Paiement (lié à Dossier) ——
+  // —— Paiements (rôle finances) ——
   {
     path: '/gestion/paiement',
     component: Layout,
     meta: {
-      title: 'Finances',
+      title: 'Paiements',
       icon: 'i-carbon:wallet',
-      auth: [PERMISSIONS.paiements, PERMISSIONS.dossiersEnCours],
-      expand: true,
+      auth: PERMISSIONS.paiements,
       sort: 40,
     },
     children: [
@@ -202,32 +201,10 @@ const gestionRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/paiement/index.vue'),
         meta: {
           title: 'Paiements',
-          icon: 'i-carbon:wallet',
-          auth: PERMISSIONS.paiements,
-          sort: 20,
-        },
-      },
-      {
-        path: 'dossiers-en-cours',
-        name: 'financeDossiersEnCours',
-        component: () => import('@/views/dossiers/enCours.vue'),
-        meta: {
-          title: 'Dossiers en cours',
-          icon: 'i-carbon:in-progress',
-          auth: PERMISSIONS.dossiersEnCours,
-          sort: 10,
-        },
-      },
-      {
-        path: 'dossier/:dossierId/fiche',
-        name: 'financeDossierFiche',
-        component: () => import('@/views/dossiers/fiche.vue'),
-        meta: {
-          title: 'Fiche de consultation',
           menu: false,
-          breadcrumb: true,
+          breadcrumb: false,
           activeMenu: '/gestion/paiement',
-          auth: PERMISSIONS.dossiersEnCours,
+          auth: PERMISSIONS.paiements,
         },
       },
     ],

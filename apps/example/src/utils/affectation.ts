@@ -84,8 +84,8 @@ export function isAffectationActive(aff: AffectationRecord): boolean {
   return true
 }
 
-export function statutAffectationFromResultat(resultat: 'gagné' | 'perdu'): string {
-  return resultat
+export function statutAffectationFromResultat(_resultat: 'gagné' | 'perdu'): string {
+  return 'Terminée'
 }
 
 export function collectUniqueAvocatNames(avocats: DossierAvocatSummary[]): string[] {

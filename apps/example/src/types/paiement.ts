@@ -33,6 +33,7 @@ export type PaiementDossierRef = {
   motif: string
   clientNom: string
   juridiction: string
+  statut?: string
   avocatId?: string
   /** Montant total des honoraires fixé une fois sur le dossier */
   montantHonorairesTotal?: number

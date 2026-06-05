@@ -5,7 +5,7 @@
 
 export type DossierStatut = 'Ouvert' | 'En cours' | 'Suspendu' | 'Clos'
 
-/** Client(idClient, nom, genre, nationalité, adresse, numTel) */
+/** Client(idClient, nom, genre, nationalité, adresse, numTel, email?) */
 export type ClientEntity = {
   id: string
   nom: string
@@ -13,6 +13,7 @@ export type ClientEntity = {
   nationalite: string
   adresse: string
   numTel: string
+  email?: string
 }
 
 /** Dossier(…, #idClient) */

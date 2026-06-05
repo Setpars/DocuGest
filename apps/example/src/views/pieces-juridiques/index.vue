@@ -40,7 +40,7 @@ const initialDocumentId = computed(() => {
         La rédaction assistée (modèles, import PDF, impression) sera activée dans une prochaine version.
       </p>
       <RouterLink
-        to="/gestion/dossiers/en-cours"
+        :to="{ name: 'enCours' }"
         class="mt-6 inline-block rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
       >
         Retour aux dossiers en cours

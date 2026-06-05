@@ -17,6 +17,7 @@ import { db } from '@/firebase'
 import type { DossierDocument, DossierDocumentForm, PieceJuridiqueKind } from '@/types/dossier-document'
 import { BTN_DISABLED } from '@/utils/action-button'
 import { getFirestoreErrorMessage } from '@/utils/firestore-errors'
+import { normalizePieceJuridiqueHtml } from '@/utils/document-html-normalize'
 import { printEditorDocument } from '@/utils/print-document'
 
 defineOptions({
@@ -281,14 +282,15 @@ function newDocument() {
 }
 
 async function loadDocument(document: DossierDocument) {
+  const contenuHtml = normalizePieceJuridiqueHtml(document.contenuHtml)
   form.value = {
     id: document.id,
     dossierId: document.dossierId,
     pieceKind: document.pieceKind ?? 'libre',
     titre: document.titre,
-    contenuHtml: document.contenuHtml,
+    contenuHtml,
   }
-  syncEditorContent(document.contenuHtml)
+  syncEditorContent(contenuHtml)
 }
 
 async function saveDocument() {
@@ -304,6 +306,9 @@ async function saveDocument() {
     return
   }
 
+  const contenuHtml = normalizePieceJuridiqueHtml(form.value.contenuHtml)
+  form.value.contenuHtml = contenuHtml
+
   saving.value = true
   try {
     const now = new Date().toISOString()
@@ -312,7 +317,7 @@ async function saveDocument() {
       type: 'piece_juridique' as const,
       pieceKind: form.value.pieceKind,
       titre: form.value.titre.trim(),
-      contenuHtml: form.value.contenuHtml,
+      contenuHtml,
       updatedAt: now,
     }
 
@@ -428,7 +433,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="text-foreground min-h-full">
+  <div class="min-h-full bg-white text-foreground">
     <div
       v-if="toast.show"
       class="fixed right-6 top-6 z-[2100] rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg"
@@ -599,7 +604,7 @@ onMounted(async () => {
           </div>
         </aside>
 
-        <section class="piece-print-area rounded-2xl bg-card shadow-sm ring-1 ring-border">
+        <section class="piece-print-area rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
           <div class="piece-no-print flex flex-wrap gap-1 border-b border-border p-2">
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm font-bold hover:bg-accent" @click="execCmd('bold')">G</button>
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm italic hover:bg-accent" @click="execCmd('italic')">I</button>
@@ -619,11 +624,11 @@ onMounted(async () => {
             <button type="button" class="rounded-lg px-2.5 py-1.5 text-sm hover:bg-accent" @click="execCmd('redo')">Rétablir</button>
           </div>
 
-          <div class="min-h-[620px] bg-white p-8 text-slate-900 dark:bg-white dark:text-slate-900">
+          <div class="min-h-[620px] bg-white p-8 text-slate-900">
             <div
               ref="editorRef"
               contenteditable="true"
-              class="piece-editor min-h-[580px] max-w-none outline-none"
+              class="piece-editor min-h-[580px] max-w-none bg-white outline-none text-slate-900"
               @input="syncFromEditor"
               @blur="syncFromEditor"
             />
@@ -635,6 +640,19 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.piece-editor {
+  background: #fff;
+  color: #0f172a;
+}
+
+.piece-editor :deep(table),
+.piece-editor :deep(thead),
+.piece-editor :deep(tr),
+.piece-editor :deep(th),
+.piece-editor :deep(td) {
+  background-color: #fff !important;
+}
+
 .piece-editor :deep(table) {
   width: 100%;
   border-collapse: collapse;

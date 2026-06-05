@@ -2,6 +2,14 @@ import type { Devise } from '@/utils/currency'
 import type { Paiement, PaiementDossierRef, PaiementStatut } from '@/types/paiement'
 import { getHonorairesPaiements } from '@/utils/paiement-nature'
 
+/** Dossier avec au moins un montant d’honoraires ou un paiement enregistré. */
+export function hasDossierFinancialData(
+  montantHonorairesTotal: number | undefined,
+  paiementsCount: number,
+): boolean {
+  return (Number(montantHonorairesTotal) || 0) > 0 || paiementsCount > 0
+}
+
 export type DossierPaiementSummary = {
   montantDu: number
   montantVerse: number

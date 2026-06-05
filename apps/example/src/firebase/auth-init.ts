@@ -1,9 +1,5 @@
-import {
-  browserLocalPersistence,
-  onAuthStateChanged,
-  setPersistence,
-  type User,
-} from 'firebase/auth'
+import { onAuthStateChanged, type User } from 'firebase/auth'
+import { applyAuthPersistence } from './auth-persistence'
 import { auth } from './index'
 
 let authReady = false
@@ -19,11 +15,11 @@ function ensureAuthReadyPromise() {
   return authReadyPromise
 }
 
-/** Persistance locale + attente du premier événement `onAuthStateChanged`. */
+/** Persistance Auth + attente du premier événement `onAuthStateChanged`. */
 export async function initFirebaseAuthPersistence(): Promise<void> {
   ensureAuthReadyPromise()
   try {
-    await setPersistence(auth, browserLocalPersistence)
+    await applyAuthPersistence()
   } catch {
     // Déjà configuré ou environnement non navigateur
   }

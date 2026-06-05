@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { PIECES_JURIDIQUES_COMING_SOON } from '@/constants/features'
-import { PERMISSIONS } from '@/constants/permissions'
+import { AUTH_DOSSIERS, PERMISSIONS } from '@/constants/permissions'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import { mapDossierDocFromRaw, type DossierStatut } from '@/utils/dossier-view-map'
 import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
@@ -26,6 +26,8 @@ type Dossier = {
   juridiction: string
   clientNom: string
   clientTelephone: string
+  montantHonorairesTotal: number
+  noteHonoraireId?: string
   avocatId?: string
 }
 
@@ -45,10 +47,10 @@ const clientsStore = useDomainClientsStore()
 const { auth: hasAuth } = useAppAuth()
 
 const canManageDossiers = computed(() => hasAuth(PERMISSIONS.dossiers))
+const canViewDossiers = computed(() => hasAuth([...AUTH_DOSSIERS]))
 const canManagePaiements = computed(() => hasAuth(PERMISSIONS.paiements))
 const canNoteHonoraire = computed(() => hasAuth(PERMISSIONS.noteHonoraire))
 const canPieces = computed(() => hasAuth(PERMISSIONS.piecesJuridiques))
-const isFinanceView = computed(() => !canManageDossiers.value && hasAuth(PERMISSIONS.dossiersEnCours))
 
 const dossiers = computed(() =>
   clientsStore.dossiersRaw
@@ -64,9 +66,17 @@ const dossiers = computed(() =>
       juridiction: item.juridiction,
       clientNom: item.clientNom,
       clientTelephone: item.clientTelephone,
+      montantHonorairesTotal: item.montantHonorairesTotal,
+      noteHonoraireId: item.noteHonoraireId,
       avocatId: item.avocatId,
     })),
 )
+
+function noteHonoraireQueryForDossier(dossier: Dossier) {
+  const query: Record<string, string> = { dossierId: dossier.id }
+  if (dossier.noteHonoraireId) query.documentId = dossier.noteHonoraireId
+  return query
+}
 const affectations = computed(() => clientsStore.affectationsRaw)
 const avocats = computed(() => clientsStore.avocatsRaw)
 const loading = computed(() => clientsStore.loading && !clientsStore.loaded)
@@ -155,33 +165,22 @@ function openRedaction(_dossierId: string) {
       <header class="mb-6 flex flex-col gap-4 rounded-2xl bg-card px-6 py-5 shadow-sm ring-1 ring-border lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p class="text-primary text-xs font-semibold tracking-wide uppercase">
-            {{ isFinanceView ? 'Finances · Suivi des dossiers' : 'Secrétariat · Suivi actif' }}
+            Secrétariat · Suivi actif
           </p>
           <h1 class="text-2xl font-semibold">
             Dossiers en cours
           </h1>
           <p class="text-muted-foreground mt-1 text-sm">
-            {{
-              isFinanceView
-                ? 'Consultez les affaires ouvertes ou en traitement avant d’enregistrer un paiement.'
-                : 'Affaires ouvertes ou en traitement — accès rapide à la rédaction des pièces juridiques.'
-            }}
+            Affaires ouvertes ou en traitement — accès rapide à la rédaction des pièces juridiques.
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
           <RouterLink
-            v-if="canManageDossiers"
-            to="/gestion/dossiers"
+            v-if="canViewDossiers"
+            :to="{ name: 'dossiers' }"
             class="rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent"
           >
             Tous les dossiers
-          </RouterLink>
-          <RouterLink
-            v-if="isFinanceView && canManagePaiements"
-            :to="{ name: 'paiement' }"
-            class="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
-          >
-            Gérer les paiements
           </RouterLink>
           <template v-if="canPieces">
             <span
@@ -277,8 +276,8 @@ function openRedaction(_dossierId: string) {
           <div v-else-if="filtered.length === 0" class="rounded-2xl bg-card p-12 text-center ring-1 ring-border">
             <p class="text-muted-foreground">Aucun dossier en cours ne correspond à vos critères.</p>
             <RouterLink
-              v-if="canManageDossiers"
-              to="/gestion/dossiers"
+              v-if="canViewDossiers"
+              :to="{ name: 'dossiers' }"
               class="text-primary mt-4 inline-block text-sm font-medium"
             >
               Voir tous les dossiers
@@ -316,11 +315,11 @@ function openRedaction(_dossierId: string) {
 
               <div class="mt-auto flex flex-wrap gap-2 pt-4">
                 <RouterLink
-                  v-if="canManageDossiers || isFinanceView"
+                  v-if="canViewDossiers"
                   :to="{
-                    name: isFinanceView ? 'financeDossierFiche' : 'dossierFiche',
+                    name: 'dossierFiche',
                     params: { dossierId: dossier.id },
-                    query: { from: isFinanceView ? 'finance' : 'enCours' },
+                    query: { from: 'enCours' },
                   }"
                   class="rounded-xl bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
                 >
@@ -351,11 +350,18 @@ function openRedaction(_dossierId: string) {
                   </button>
                 </template>
                 <RouterLink
-                  v-if="canNoteHonoraire"
-                  :to="`/gestion/note-honoraire?dossierId=${dossier.id}`"
+                  v-if="canNoteHonoraire && !dossier.noteHonoraireId"
+                  :to="{ name: 'noteHonoraire', query: { dossierId: dossier.id } }"
                   class="rounded-xl border border-border px-3 py-2 text-xs hover:bg-accent"
                 >
                   Note honoraire
+                </RouterLink>
+                <RouterLink
+                  v-else-if="canNoteHonoraire && dossier.noteHonoraireId"
+                  :to="{ name: 'noteHonoraire', query: noteHonoraireQueryForDossier(dossier) }"
+                  class="rounded-xl border border-border px-3 py-2 text-xs hover:bg-accent"
+                >
+                  Ouvrir note
                 </RouterLink>
               </div>
             </article>
