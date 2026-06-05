@@ -85,6 +85,7 @@ declare global {
   const useCssVars: typeof import('vue').useCssVars
   const useDefaultFullscreen: typeof import('../composables/useDefaultFullscreen').useDefaultFullscreen
   const useDomainClientsStore: typeof import('../store/modules/domain/clients').useDomainClientsStore
+  const useDomainRealtime: typeof import('../composables/useDomainRealtime').useDomainRealtime
   const useFaDrawer: typeof import('@fantastic-admin/components').useFaDrawer
   const useFaImagePreview: typeof import('@fantastic-admin/components').useFaImagePreview
   const useFaLoading: typeof import('@fantastic-admin/components').useFaLoading
