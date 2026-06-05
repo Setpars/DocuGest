@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { PIECES_JURIDIQUES_COMING_SOON } from '@/constants/features'
+import { PERMISSIONS } from '@/constants/permissions'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
 import { mapDossierDocFromRaw, type DossierStatut } from '@/utils/dossier-view-map'
 import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
@@ -41,6 +42,13 @@ const STATUT_META: Record<'Ouvert' | 'En cours', { label: string, badgeClass: st
 
 const router = useRouter()
 const clientsStore = useDomainClientsStore()
+const { auth: hasAuth } = useAppAuth()
+
+const canManageDossiers = computed(() => hasAuth(PERMISSIONS.dossiers))
+const canManagePaiements = computed(() => hasAuth(PERMISSIONS.paiements))
+const canNoteHonoraire = computed(() => hasAuth(PERMISSIONS.noteHonoraire))
+const canPieces = computed(() => hasAuth(PERMISSIONS.piecesJuridiques))
+const isFinanceView = computed(() => !canManageDossiers.value && hasAuth(PERMISSIONS.dossiersEnCours))
 
 const dossiers = computed(() =>
   clientsStore.dossiersRaw
@@ -147,37 +155,51 @@ function openRedaction(_dossierId: string) {
       <header class="mb-6 flex flex-col gap-4 rounded-2xl bg-card px-6 py-5 shadow-sm ring-1 ring-border lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p class="text-primary text-xs font-semibold tracking-wide uppercase">
-            Secrétariat · Suivi actif
+            {{ isFinanceView ? 'Finances · Suivi des dossiers' : 'Secrétariat · Suivi actif' }}
           </p>
           <h1 class="text-2xl font-semibold">
             Dossiers en cours
           </h1>
           <p class="text-muted-foreground mt-1 text-sm">
-            Affaires ouvertes ou en traitement — accès rapide à la rédaction des pièces juridiques.
+            {{
+              isFinanceView
+                ? 'Consultez les affaires ouvertes ou en traitement avant d’enregistrer un paiement.'
+                : 'Affaires ouvertes ou en traitement — accès rapide à la rédaction des pièces juridiques.'
+            }}
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
           <RouterLink
+            v-if="canManageDossiers"
             to="/gestion/dossiers"
             class="rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent"
           >
             Tous les dossiers
           </RouterLink>
-          <span
-            v-if="PIECES_JURIDIQUES_COMING_SOON"
-            :class="['rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
-            :title="comingSoonTitle()"
-          >
-            Rédiger une pièce
-            <ComingSoonBadge />
-          </span>
           <RouterLink
-            v-else
-            :to="{ name: 'piecesJuridiques' }"
+            v-if="isFinanceView && canManagePaiements"
+            :to="{ name: 'paiement' }"
             class="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
           >
-            Rédiger une pièce
+            Gérer les paiements
           </RouterLink>
+          <template v-if="canPieces">
+            <span
+              v-if="PIECES_JURIDIQUES_COMING_SOON"
+              :class="['rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
+              :title="comingSoonTitle()"
+            >
+              Rédiger une pièce
+              <ComingSoonBadge />
+            </span>
+            <RouterLink
+              v-else
+              :to="{ name: 'piecesJuridiques' }"
+              class="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
+            >
+              Rédiger une pièce
+            </RouterLink>
+          </template>
         </div>
       </header>
 
@@ -254,7 +276,11 @@ function openRedaction(_dossierId: string) {
 
           <div v-else-if="filtered.length === 0" class="rounded-2xl bg-card p-12 text-center ring-1 ring-border">
             <p class="text-muted-foreground">Aucun dossier en cours ne correspond à vos critères.</p>
-            <RouterLink to="/gestion/dossiers" class="text-primary mt-4 inline-block text-sm font-medium">
+            <RouterLink
+              v-if="canManageDossiers"
+              to="/gestion/dossiers"
+              class="text-primary mt-4 inline-block text-sm font-medium"
+            >
               Voir tous les dossiers
             </RouterLink>
           </div>
@@ -290,27 +316,42 @@ function openRedaction(_dossierId: string) {
 
               <div class="mt-auto flex flex-wrap gap-2 pt-4">
                 <RouterLink
-                  :to="{ name: 'dossierFiche', params: { dossierId: dossier.id }, query: { from: 'enCours' } }"
+                  v-if="canManageDossiers || isFinanceView"
+                  :to="{
+                    name: isFinanceView ? 'financeDossierFiche' : 'dossierFiche',
+                    params: { dossierId: dossier.id },
+                    query: { from: isFinanceView ? 'finance' : 'enCours' },
+                  }"
                   class="rounded-xl bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
                 >
                   Fiche de suivi
                 </RouterLink>
-                <span
-                  v-if="PIECES_JURIDIQUES_COMING_SOON"
-                  :class="['rounded-xl border border-border bg-muted px-3 py-2 text-xs font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
-                  :title="comingSoonTitle()"
-                >
-                  Rédiger une pièce
-                </span>
-                <button
-                  v-else
-                  type="button"
-                  class="rounded-xl bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
-                  @click="openRedaction(dossier.id)"
-                >
-                  Rédiger une pièce
-                </button>
                 <RouterLink
+                  v-if="canManagePaiements"
+                  :to="{ name: 'paiement', query: { dossierId: dossier.id, open: 'add' } }"
+                  class="rounded-xl bg-emerald-100 px-3 py-2 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                >
+                  Paiement
+                </RouterLink>
+                <template v-if="canPieces">
+                  <span
+                    v-if="PIECES_JURIDIQUES_COMING_SOON"
+                    :class="['rounded-xl border border-border bg-muted px-3 py-2 text-xs font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
+                    :title="comingSoonTitle()"
+                  >
+                    Rédiger une pièce
+                  </span>
+                  <button
+                    v-else
+                    type="button"
+                    class="rounded-xl bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
+                    @click="openRedaction(dossier.id)"
+                  >
+                    Rédiger une pièce
+                  </button>
+                </template>
+                <RouterLink
+                  v-if="canNoteHonoraire"
                   :to="`/gestion/note-honoraire?dossierId=${dossier.id}`"
                   class="rounded-xl border border-border px-3 py-2 text-xs hover:bg-accent"
                 >

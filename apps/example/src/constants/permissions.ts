@@ -4,6 +4,8 @@ import type { AppUserRole } from '@/types/auth'
 export const PERMISSIONS = {
   clients: 'gestion.clients',
   dossiers: 'gestion.dossiers',
+  /** Consultation des dossiers actifs (rôle finances). */
+  dossiersEnCours: 'gestion.dossiers.en_cours',
   agenda: 'gestion.agenda',
   noteHonoraire: 'gestion.note_honoraire',
   piecesJuridiques: 'gestion.pieces_juridiques',
@@ -32,6 +34,7 @@ export const ROLE_PERMISSIONS: Record<AppUserRole, string[]> = {
   ],
   finance: [
     PERMISSIONS.paiements,
+    PERMISSIONS.dossiersEnCours,
   ],
 }
 

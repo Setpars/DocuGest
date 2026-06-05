@@ -52,6 +52,9 @@ const backLink = computed(() => {
   if (from === 'enCours') {
     return { to: { name: 'enCours' }, label: '← Dossiers en cours' }
   }
+  if (from === 'finance' || route.name === 'financeDossierFiche') {
+    return { to: { name: 'financeDossiersEnCours' }, label: '← Dossiers en cours' }
+  }
   return { to: { name: 'dossiers' }, label: '← Tous les dossiers' }
 })
 
