@@ -1,24 +1,26 @@
+import type { Firestore } from 'firebase/firestore'
+import type { AffectationRecord } from '@/utils/affectation'
+import type { DossierResultatIssue } from '@/utils/dossier-resultat'
 import {
   collection,
   doc,
+
   getDocs,
   query,
   runTransaction,
   where,
-  type Firestore,
 } from 'firebase/firestore'
 import { NOTE_HONORAIRE_MESSAGES } from '@/constants/note-honoraire'
-import { isAffectationActive, type AffectationRecord } from '@/utils/affectation'
-import type { DossierResultatIssue } from '@/utils/dossier-resultat'
+import { isAffectationActive } from '@/utils/affectation'
 
-export type CreateNoteHonoraireInput = {
+export interface CreateNoteHonoraireInput {
   dossierId: string
   resultat: DossierResultatIssue
   titre: string
   contenuHtml: string
 }
 
-export type CreateNoteHonoraireResult = {
+export interface CreateNoteHonoraireResult {
   noteId: string
   affectationsCloturees: number
 }
@@ -32,7 +34,9 @@ export async function countNotesHonorairesForDossier(
   firestore: Firestore,
   dossierId: string,
 ): Promise<number> {
-  if (!dossierId) return 0
+  if (!dossierId) {
+    return 0
+  }
   const snap = await getDocs(
     query(
       collection(firestore, 'dossier_documents'),
@@ -54,6 +58,20 @@ export async function createNoteHonoraireWithCloture(
   const now = new Date().toISOString()
   const today = todayIsoDate()
 
+  const [existingNotesCount, affectationRefs] = await Promise.all([
+    countNotesHonorairesForDossier(firestore, input.dossierId),
+    getDocs(
+      query(
+        collection(firestore, 'affectations'),
+        where('dossierId', '==', input.dossierId),
+      ),
+    ),
+  ])
+
+  if (existingNotesCount > 0) {
+    throw new Error(NOTE_HONORAIRE_MESSAGES.alreadyExists)
+  }
+
   return runTransaction(firestore, async (transaction) => {
     const dossierRef = doc(firestore, 'dossiers', input.dossierId)
     const dossierSnap = await transaction.get(dossierRef)
@@ -67,16 +85,6 @@ export async function createNoteHonoraireWithCloture(
       throw new Error(NOTE_HONORAIRE_MESSAGES.missingMontant)
     }
     if (dossierData.noteHonoraireId) {
-      throw new Error(NOTE_HONORAIRE_MESSAGES.alreadyExists)
-    }
-
-    const notesQuery = query(
-      collection(firestore, 'dossier_documents'),
-      where('dossierId', '==', input.dossierId),
-      where('type', '==', 'note_honoraire'),
-    )
-    const notesSnap = await transaction.get(notesQuery)
-    if (!notesSnap.empty) {
       throw new Error(NOTE_HONORAIRE_MESSAGES.alreadyExists)
     }
 
@@ -101,17 +109,18 @@ export async function createNoteHonoraireWithCloture(
     }
     transaction.update(dossierRef, dossierPatch)
 
-    const affectationsQuery = query(
-      collection(firestore, 'affectations'),
-      where('dossierId', '==', input.dossierId),
-    )
-    const affectationsSnap = await transaction.get(affectationsQuery)
     let affectationsCloturees = 0
 
-    for (const affDoc of affectationsSnap.docs) {
-      const aff = { id: affDoc.id, ...affDoc.data() } as AffectationRecord
-      if (!isAffectationActive(aff)) continue
-      transaction.update(affDoc.ref, {
+    for (const affDoc of affectationRefs.docs) {
+      const affSnap = await transaction.get(affDoc.ref)
+      if (!affSnap.exists()) {
+        continue
+      }
+      const aff = { id: affSnap.id, ...affSnap.data() } as AffectationRecord
+      if (!isAffectationActive(aff)) {
+        continue
+      }
+      transaction.update(affSnap.ref, {
         statut: 'Terminée',
         date_fin: aff.date_fin?.trim() ? aff.date_fin : today,
         updatedAt: now,

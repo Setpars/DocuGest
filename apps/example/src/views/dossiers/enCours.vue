@@ -1,22 +1,23 @@
 <script setup lang="ts">
+import type { DossierStatut } from '@/utils/dossier-view-map'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { PIECES_JURIDIQUES_COMING_SOON } from '@/constants/features'
 import { AUTH_DOSSIERS, PERMISSIONS } from '@/constants/permissions'
 import { useDomainClientsStore } from '@/store/modules/domain/clients'
-import { mapDossierDocFromRaw, type DossierStatut } from '@/utils/dossier-view-map'
-import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
-import { collectUniqueStrings } from '@/utils/collect-field-suggestions'
 import {
   formatAvocatsLabel,
   resolveDossierAvocats,
 } from '@/utils/affectation'
+import { collectUniqueStrings } from '@/utils/collect-field-suggestions'
+import { COMING_SOON_CONTROL_CLASS, comingSoonTitle } from '@/utils/coming-soon'
+import { mapDossierDocFromRaw } from '@/utils/dossier-view-map'
 
 defineOptions({
   name: 'DossiersEnCours',
 })
 
-type Dossier = {
+interface Dossier {
   id: string
   motif: string
   partie_en_cause: string
@@ -32,7 +33,7 @@ type Dossier = {
 }
 
 const STATUT_META: Record<'Ouvert' | 'En cours', { label: string, badgeClass: string }> = {
-  Ouvert: {
+  'Ouvert': {
     label: 'Ouvert',
     badgeClass: 'bg-blue-500/15 text-blue-700 dark:text-blue-300',
   },
@@ -46,7 +47,6 @@ const router = useRouter()
 const clientsStore = useDomainClientsStore()
 const { auth: hasAuth } = useAppAuth()
 
-const canManageDossiers = computed(() => hasAuth(PERMISSIONS.dossiers))
 const canViewDossiers = computed(() => hasAuth([...AUTH_DOSSIERS]))
 const canManagePaiements = computed(() => hasAuth(PERMISSIONS.paiements))
 const canNoteHonoraire = computed(() => hasAuth(PERMISSIONS.noteHonoraire))
@@ -54,9 +54,9 @@ const canPieces = computed(() => hasAuth(PERMISSIONS.piecesJuridiques))
 
 const dossiers = computed(() =>
   clientsStore.dossiersRaw
-    .map((item) => mapDossierDocFromRaw(item))
-    .filter((item) => item.statut === 'En cours' || item.statut === 'Ouvert')
-    .map((item) => ({
+    .map(item => mapDossierDocFromRaw(item))
+    .filter(item => item.statut === 'En cours' || item.statut === 'Ouvert')
+    .map(item => ({
       id: item.id,
       motif: item.motif,
       partie_en_cause: item.partie_en_cause,
@@ -74,7 +74,9 @@ const dossiers = computed(() =>
 
 function noteHonoraireQueryForDossier(dossier: Dossier) {
   const query: Record<string, string> = { dossierId: dossier.id }
-  if (dossier.noteHonoraireId) query.documentId = dossier.noteHonoraireId
+  if (dossier.noteHonoraireId) {
+    query.documentId = dossier.noteHonoraireId
+  }
   return query
 }
 const affectations = computed(() => clientsStore.affectationsRaw)
@@ -85,9 +87,13 @@ const filterStatut = ref<'' | 'Ouvert' | 'En cours'>('')
 const selectedJurisdiction = ref<string | null>(null)
 
 function formatDate(value?: string) {
-  if (!value) return '—'
+  if (!value) {
+    return '—'
+  }
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
   return date.toLocaleDateString('fr-FR', {
     day: '2-digit',
     month: '2-digit',
@@ -122,7 +128,7 @@ watch([search, filterStatut, selectedJurisdiction], () => {})
 
 const jurisdictions = computed(() =>
   collectUniqueStrings([
-    ...dossiers.value.map((d) => d.juridiction),
+    ...dossiers.value.map(d => d.juridiction),
     ...clientsStore.juridictionSuggestions,
   ]),
 )
@@ -138,20 +144,22 @@ const filtered = computed(() => {
       d.partie_en_cause,
       d.juridiction,
       getSuiviLabel(d),
-    ].some((field) => field.toLowerCase().includes(q))
+    ].some(field => field.toLowerCase().includes(q))
     return matchStatut && matchJur && matchSearch
   })
 })
 
 const totals = computed(() => ({
   total: dossiers.value.length,
-  ouvert: dossiers.value.filter((d) => d.statut === 'Ouvert').length,
-  enCours: dossiers.value.filter((d) => d.statut === 'En cours').length,
-  sansAvocat: dossiers.value.filter((d) => getSuiviLabel(d) === 'En attente d’avocat').length,
+  ouvert: dossiers.value.filter(d => d.statut === 'Ouvert').length,
+  enCours: dossiers.value.filter(d => d.statut === 'En cours').length,
+  sansAvocat: dossiers.value.filter(d => getSuiviLabel(d) === 'En attente d’avocat').length,
 }))
 
 function openRedaction(_dossierId: string) {
-  if (PIECES_JURIDIQUES_COMING_SOON) return
+  if (PIECES_JURIDIQUES_COMING_SOON) {
+    return
+  }
   router.push({
     name: 'piecesJuridiques',
     query: { dossierId: _dossierId },
@@ -161,16 +169,16 @@ function openRedaction(_dossierId: string) {
 
 <template>
   <div class="text-foreground min-h-full">
-    <div class="mx-auto max-w-[1600px] p-4 sm:p-6">
-      <header class="mb-6 flex flex-col gap-4 rounded-2xl bg-card px-6 py-5 shadow-sm ring-1 ring-border lg:flex-row lg:items-center lg:justify-between">
+    <div class="mx-auto p-4 max-w-[1600px] sm:p-6">
+      <header class="mb-6 px-6 py-5 rounded-2xl bg-card flex flex-col gap-4 ring-1 ring-border shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p class="text-primary text-xs font-semibold tracking-wide uppercase">
+          <p class="text-xs text-primary tracking-wide font-semibold uppercase">
             Secrétariat · Suivi actif
           </p>
           <h1 class="text-2xl font-semibold">
             Dossiers en cours
           </h1>
-          <p class="text-muted-foreground mt-1 text-sm">
+          <p class="text-sm text-muted-foreground mt-1">
             Affaires ouvertes ou en traitement — accès rapide à la rédaction des pièces juridiques.
           </p>
         </div>
@@ -178,14 +186,14 @@ function openRedaction(_dossierId: string) {
           <RouterLink
             v-if="canViewDossiers"
             :to="{ name: 'dossiers' }"
-            class="rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent"
+            class="text-sm px-4 py-2.5 border border-border rounded-xl hover:bg-accent"
           >
             Tous les dossiers
           </RouterLink>
           <template v-if="canPieces">
             <span
               v-if="PIECES_JURIDIQUES_COMING_SOON"
-              :class="['rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
+              class="text-sm text-muted-foreground font-medium px-4 py-2.5 border border-border rounded-xl bg-muted" :class="[COMING_SOON_CONTROL_CLASS]"
               :title="comingSoonTitle()"
             >
               Rédiger une pièce
@@ -194,7 +202,7 @@ function openRedaction(_dossierId: string) {
             <RouterLink
               v-else
               :to="{ name: 'piecesJuridiques' }"
-              class="rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
+              class="text-sm text-primary-foreground font-medium px-4 py-2.5 rounded-xl bg-primary"
             >
               Rédiger une pièce
             </RouterLink>
@@ -202,52 +210,74 @@ function openRedaction(_dossierId: string) {
         </div>
       </header>
 
-      <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div class="rounded-2xl bg-card p-4 ring-1 ring-border">
-          <div class="text-muted-foreground text-sm">Actifs</div>
-          <div class="mt-2 text-2xl font-semibold">{{ totals.total }}</div>
+      <div class="mb-6 gap-4 grid sm:grid-cols-2 xl:grid-cols-4">
+        <div class="p-4 rounded-2xl bg-card ring-1 ring-border">
+          <div class="text-sm text-muted-foreground">
+            Actifs
+          </div>
+          <div class="text-2xl font-semibold mt-2">
+            {{ totals.total }}
+          </div>
         </div>
-        <div class="rounded-2xl bg-card p-4 ring-1 ring-border">
-          <div class="text-muted-foreground text-sm">Ouverts</div>
-          <div class="mt-2 text-2xl font-semibold text-blue-600">{{ totals.ouvert }}</div>
+        <div class="p-4 rounded-2xl bg-card ring-1 ring-border">
+          <div class="text-sm text-muted-foreground">
+            Ouverts
+          </div>
+          <div class="text-2xl text-blue-600 font-semibold mt-2">
+            {{ totals.ouvert }}
+          </div>
         </div>
-        <div class="rounded-2xl bg-card p-4 ring-1 ring-border">
-          <div class="text-muted-foreground text-sm">En cours</div>
-          <div class="mt-2 text-2xl font-semibold text-amber-600">{{ totals.enCours }}</div>
+        <div class="p-4 rounded-2xl bg-card ring-1 ring-border">
+          <div class="text-sm text-muted-foreground">
+            En cours
+          </div>
+          <div class="text-2xl text-amber-600 font-semibold mt-2">
+            {{ totals.enCours }}
+          </div>
         </div>
-        <div class="rounded-2xl bg-card p-4 ring-1 ring-border">
-          <div class="text-muted-foreground text-sm">Sans avocat</div>
-          <div class="mt-2 text-2xl font-semibold text-amber-600">{{ totals.sansAvocat }}</div>
+        <div class="p-4 rounded-2xl bg-card ring-1 ring-border">
+          <div class="text-sm text-muted-foreground">
+            Sans avocat
+          </div>
+          <div class="text-2xl text-amber-600 font-semibold mt-2">
+            {{ totals.sansAvocat }}
+          </div>
         </div>
       </div>
 
-      <div class="mb-6 rounded-2xl bg-card p-4 ring-1 ring-border">
-        <div class="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-center">
+      <div class="mb-6 p-4 rounded-2xl bg-card ring-1 ring-border">
+        <div class="gap-3 grid md:grid-cols-[1fr_auto_auto] md:items-center">
           <input
             v-model="search"
             placeholder="Rechercher motif, client, juridiction, avocat…"
-            class="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+            class="text-sm px-4 py-2.5 outline-none border border-border rounded-xl bg-background w-full focus:ring-2 focus:ring-ring"
           >
-          <select v-model="filterStatut" class="rounded-xl border border-border bg-background px-4 py-2.5 text-sm">
-            <option value="">Tous (ouverts + en cours)</option>
-            <option value="Ouvert">Ouvert uniquement</option>
-            <option value="En cours">En cours uniquement</option>
+          <select v-model="filterStatut" class="text-sm px-4 py-2.5 border border-border rounded-xl bg-background">
+            <option value="">
+              Tous (ouverts + en cours)
+            </option>
+            <option value="Ouvert">
+              Ouvert uniquement
+            </option>
+            <option value="En cours">
+              En cours uniquement
+            </option>
           </select>
-          <span class="text-muted-foreground text-sm">{{ filtered.length }} dossier(s)</span>
+          <span class="text-sm text-muted-foreground">{{ filtered.length }} dossier(s)</span>
         </div>
       </div>
 
-      <div class="grid gap-6 lg:grid-cols-[260px_1fr]">
+      <div class="gap-6 grid lg:grid-cols-[260px_1fr]">
         <aside class="rounded-2xl bg-card ring-1 ring-border">
-          <div class="border-b border-border px-4 py-3">
-            <h2 class="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+          <div class="px-4 py-3 border-b border-border">
+            <h2 class="text-xs text-muted-foreground tracking-wide font-semibold uppercase">
               Juridictions
             </h2>
           </div>
-          <div class="max-h-[55vh] overflow-y-auto p-3">
+          <div class="p-3 max-h-[55vh] overflow-y-auto">
             <button
               type="button"
-              class="mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition"
+              class="text-sm mb-1 px-3 py-2 text-left rounded-xl flex w-full transition items-center justify-between"
               :class="!selectedJurisdiction ? 'bg-primary/10 text-primary' : 'hover:bg-accent'"
               @click="selectedJurisdiction = null"
             >
@@ -258,62 +288,64 @@ function openRedaction(_dossierId: string) {
               v-for="j in jurisdictions"
               :key="j"
               type="button"
-              class="mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition"
+              class="text-sm mb-1 px-3 py-2 text-left rounded-xl flex w-full transition items-center justify-between"
               :class="selectedJurisdiction === j ? 'bg-primary/10 text-primary' : 'hover:bg-accent'"
               @click="selectedJurisdiction = j"
             >
-              <span class="truncate pr-2">{{ j }}</span>
-              <span class="shrink-0 text-xs">{{ dossiers.filter((d) => d.juridiction === j).length }}</span>
+              <span class="pr-2 truncate">{{ j }}</span>
+              <span class="text-xs shrink-0">{{ dossiers.filter((d) => d.juridiction === j).length }}</span>
             </button>
           </div>
         </aside>
 
         <main>
-          <div v-if="loading" class="rounded-2xl bg-card p-10 text-center text-muted-foreground ring-1 ring-border">
+          <div v-if="loading" class="text-muted-foreground p-10 text-center rounded-2xl bg-card ring-1 ring-border">
             Chargement…
           </div>
 
-          <div v-else-if="filtered.length === 0" class="rounded-2xl bg-card p-12 text-center ring-1 ring-border">
-            <p class="text-muted-foreground">Aucun dossier en cours ne correspond à vos critères.</p>
+          <div v-else-if="filtered.length === 0" class="p-12 text-center rounded-2xl bg-card ring-1 ring-border">
+            <p class="text-muted-foreground">
+              Aucun dossier en cours ne correspond à vos critères.
+            </p>
             <RouterLink
               v-if="canViewDossiers"
               :to="{ name: 'dossiers' }"
-              class="text-primary mt-4 inline-block text-sm font-medium"
+              class="text-sm text-primary font-medium mt-4 inline-block"
             >
               Voir tous les dossiers
             </RouterLink>
           </div>
 
-          <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div v-else class="gap-4 grid sm:grid-cols-2 xl:grid-cols-3">
             <article
               v-for="dossier in filtered"
               :key="dossier.id"
-              class="flex flex-col rounded-2xl bg-card p-5 ring-1 ring-border transition hover:ring-primary/40"
+              class="p-5 rounded-2xl bg-card flex flex-col ring-1 ring-border transition hover:ring-primary/40"
             >
-              <div class="mb-3 flex items-start justify-between gap-2">
+              <div class="mb-3 flex gap-2 items-start justify-between">
                 <span
-                  class="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  class="text-xs font-medium px-2.5 py-0.5 rounded-full"
                   :class="STATUT_META[dossier.statut as 'Ouvert' | 'En cours']?.badgeClass ?? STATUT_META.Ouvert.badgeClass"
                 >
                   {{ dossier.statut }}
                 </span>
-                <span class="text-muted-foreground text-xs">{{ formatDate(dossier.date_ouverture) }}</span>
+                <span class="text-xs text-muted-foreground">{{ formatDate(dossier.date_ouverture) }}</span>
               </div>
 
-              <h3 class="line-clamp-2 text-lg font-semibold leading-snug">
+              <h3 class="text-lg leading-snug font-semibold line-clamp-2">
                 {{ dossier.motif }}
               </h3>
-              <p class="text-muted-foreground mt-1 text-sm">
+              <p class="text-sm text-muted-foreground mt-1">
                 {{ dossier.clientNom || 'Client non renseigné' }}
               </p>
-              <p class="text-muted-foreground mt-2 line-clamp-2 text-xs">
+              <p class="text-xs text-muted-foreground mt-2 line-clamp-2">
                 {{ dossier.juridiction }} · {{ getSuiviLabel(dossier) }}
               </p>
-              <p v-if="dossier.resume_affaire" class="text-muted-foreground mt-2 line-clamp-2 text-xs">
+              <p v-if="dossier.resume_affaire" class="text-xs text-muted-foreground mt-2 line-clamp-2">
                 {{ dossier.resume_affaire }}
               </p>
 
-              <div class="mt-auto flex flex-wrap gap-2 pt-4">
+              <div class="mt-auto pt-4 flex flex-wrap gap-2">
                 <RouterLink
                   v-if="canViewDossiers"
                   :to="{
@@ -321,21 +353,21 @@ function openRedaction(_dossierId: string) {
                     params: { dossierId: dossier.id },
                     query: { from: 'enCours' },
                   }"
-                  class="rounded-xl bg-violet-100 px-3 py-2 text-xs font-medium text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
+                  class="text-xs text-violet-800 font-medium px-3 py-2 rounded-xl bg-violet-100 dark:text-violet-200 dark:bg-violet-900/40"
                 >
                   Fiche de suivi
                 </RouterLink>
                 <RouterLink
                   v-if="canManagePaiements"
                   :to="{ name: 'paiement', query: { dossierId: dossier.id, open: 'add' } }"
-                  class="rounded-xl bg-emerald-100 px-3 py-2 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                  class="text-xs text-emerald-800 font-medium px-3 py-2 rounded-xl bg-emerald-100 dark:text-emerald-200 dark:bg-emerald-900/40"
                 >
                   Paiement
                 </RouterLink>
                 <template v-if="canPieces">
                   <span
                     v-if="PIECES_JURIDIQUES_COMING_SOON"
-                    :class="['rounded-xl border border-border bg-muted px-3 py-2 text-xs font-medium text-muted-foreground', COMING_SOON_CONTROL_CLASS]"
+                    class="text-xs text-muted-foreground font-medium px-3 py-2 border border-border rounded-xl bg-muted" :class="[COMING_SOON_CONTROL_CLASS]"
                     :title="comingSoonTitle()"
                   >
                     Rédiger une pièce
@@ -343,7 +375,7 @@ function openRedaction(_dossierId: string) {
                   <button
                     v-else
                     type="button"
-                    class="rounded-xl bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
+                    class="text-xs text-primary-foreground font-medium px-3 py-2 rounded-xl bg-primary"
                     @click="openRedaction(dossier.id)"
                   >
                     Rédiger une pièce
@@ -352,14 +384,14 @@ function openRedaction(_dossierId: string) {
                 <RouterLink
                   v-if="canNoteHonoraire && !dossier.noteHonoraireId"
                   :to="{ name: 'noteHonoraire', query: { dossierId: dossier.id } }"
-                  class="rounded-xl border border-border px-3 py-2 text-xs hover:bg-accent"
+                  class="text-xs px-3 py-2 border border-border rounded-xl hover:bg-accent"
                 >
                   Note honoraire
                 </RouterLink>
                 <RouterLink
                   v-else-if="canNoteHonoraire && dossier.noteHonoraireId"
                   :to="{ name: 'noteHonoraire', query: noteHonoraireQueryForDossier(dossier) }"
-                  class="rounded-xl border border-border px-3 py-2 text-xs hover:bg-accent"
+                  class="text-xs px-3 py-2 border border-border rounded-xl hover:bg-accent"
                 >
                   Ouvrir note
                 </RouterLink>
