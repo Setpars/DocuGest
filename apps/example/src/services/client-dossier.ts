@@ -52,7 +52,9 @@ export async function fetchAllClients(firestore: Firestore): Promise<ClientRecor
   return snap.docs.map((item) => mapClientFromFirestore(item.id, item.data() as Record<string, unknown>))
 }
 
-export async function fetchAllDossiersRaw(firestore: Firestore) {
+export type DossierRawRecord = Record<string, unknown> & { id: string }
+
+export async function fetchAllDossiersRaw(firestore: Firestore): Promise<DossierRawRecord[]> {
   const snap = await getDocs(collection(firestore, COLLECTIONS.dossier))
   return snap.docs.map((item) => ({
     id: item.id,
